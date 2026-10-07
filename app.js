@@ -442,11 +442,11 @@
     const shown=sorted.slice(0,5);
     const hardExcluded=state.lastSearch?.hardExcluded||0;
     $('result-subtitle').textContent=sorted.length
-      ? `${sorted.length} eligible partner hospitals. Showing ${Math.min(5,sorted.length)} best options${hardExcluded?` · ${hardExcluded} matching hold/restriction excluded`:''}.`
-      : `No eligible partner hospital found${hardExcluded?` · ${hardExcluded} matching hold/restriction excluded`:''}.`;
+      ? `${sorted.length} eligible partner hospitals · showing ${Math.min(5,sorted.length)} best options${hardExcluded?` · ${hardExcluded} restricted option${hardExcluded===1?'':'s'} excluded`:''}.`
+      : `No eligible partner hospital found${hardExcluded?` · ${hardExcluded} restricted option${hardExcluded===1?'':'s'} excluded`:''}.`;
 
     if(!sorted.length){
-      $('recommendations').innerHTML='<div class="empty-state">No Sheet-1 partner hospital passed the current status + insurer + TPA + city/distance filters. Try widening distance or reviewing restricted hospitals.</div>';
+      $('recommendations').innerHTML='<div class="empty-state">No partner hospital passed the current City + Status + Insurer + TPA filters. Try widening distance or reviewing restricted hospitals.</div>';
       $('deduction-table').innerHTML='<div class="detail-empty">No eligible hospitals for this search.</div>';
       $('hospital-detail').innerHTML='<div class="detail-empty">No hospital selected.</div>';
       $('detail-wrap').classList.remove('open');
@@ -466,31 +466,29 @@
         <div class="rec-hospital">
           <div class="hospital-name">${esc(r.h.hospitalName)}</div>
           <div class="subline">${esc(cityLabelFromKey(r.h.cityKey))} · PIN ${esc(r.h.pinCode)} · ${distance}</div>
+          <div class="empanel-inline"><span class="empanel-main">✓ EMPANELLED</span><span class="payer-ok">Insurer YES</span><span class="payer-ok">TPA YES</span></div>
           <div class="chip-row"><span class="chip ok">${esc(r.h.status)}</span>${evidenceTag(r)}${r.restriction.severity!=='none'&&r.restriction.severity!=='info'?`<span class="chip ${r.restriction.severity==='hard'?'bad':'warn'}">Restriction review</span>`:''}</div>
-        </div>
-        <div class="empanel-block">
-          <div class="empanel-title">✓ EMPANELLED</div>
-          <div class="empanel-lines"><span title="${esc(insurer)}">Insurer <b>YES</b></span><span title="${esc(tpa)}">TPA <b>YES</b></span></div>
           <div class="subline" title="${esc(insurer)} / ${esc(tpa)}">${esc(insurerShort)} · ${esc(tpaShort)}</div>
         </div>
-        <div class="metric"><span>${r.useBase?'Median Base Bill':'Median Bill'}</span><strong>${fmtMoney(r.medBill)}</strong><div class="subline ${resultVarianceClass(r.variance)}">${r.variance==null?'No usable bill evidence':v+' vs target'}</div></div>
-        <div class="metric"><span>Median Approval</span><strong>${fmtMoney(r.medApproval)}</strong><div class="subline">${r.approvalPct==null?'—':r.approvalPct.toFixed(0)+'% realization'}</div></div>
-        <div class="metric"><span>Bill − Approval</span><strong class="risk-${riskClass}">${r.gapPct==null?'—':r.gapPct.toFixed(1)+'%'}</strong><div class="subline">${fmtMoney(r.medGap)}</div></div>
-        <div class="history-lines"><strong>${r.rows.length} cases · ${esc(r.conf)}</strong><small>Last exact: ${fmtDate(r.lastExact)}</small><small>Last procedure: ${fmtDate(r.lastProc)}</small></div>
-        <div class="arrow">›</div>
+        <div class="metric"><span>${r.useBase?'Base bill':'Median bill'}</span><strong>${fmtMoney(r.medBill)}</strong><div class="subline ${resultVarianceClass(r.variance)}">${r.variance==null?'No usable bill':v+' vs target'}</div></div>
+        <div class="metric"><span>Approval</span><strong>${fmtMoney(r.medApproval)}</strong><div class="subline">${r.approvalPct==null?'—':r.approvalPct.toFixed(0)+'% realization'}</div></div>
+        <div class="metric"><span>Deduction</span><strong class="risk-${riskClass}">${r.gapPct==null?'—':r.gapPct.toFixed(1)+'%'}</strong><div class="subline">${fmtMoney(r.medGap)}</div></div>
+        <div class="history-lines"><strong>${r.rows.length} cases · ${esc(r.conf)}</strong><small>Exact: ${fmtDate(r.lastExact)}</small><small>Procedure: ${fmtDate(r.lastProc)}</small></div>
       </article>`;
     }).join('');
 
     document.querySelectorAll('.rec-card').forEach(card=>card.addEventListener('click',()=>{
       document.querySelectorAll('.rec-card').forEach(x=>x.classList.remove('selected'));
       card.classList.add('selected');
-      $('detail-wrap').classList.add('open');
       showDetail(shown[Number(card.dataset.index)]);
+      $('detail-wrap').classList.add('open');
+      $('detail-wrap').setAttribute('aria-hidden','false');
     }));
 
     renderDeductionWatch(sorted);
     $('detail-wrap').classList.remove('open');
-    $('hospital-detail').innerHTML='<div class="detail-empty">Click any recommended hospital to see case-level evidence and current comments.</div>';
+    $('detail-wrap').setAttribute('aria-hidden','true');
+    $('hospital-detail').innerHTML='<div class="detail-empty">Click any recommended hospital to see detailed evidence.</div>';
     drawMap(shown,$('pincode').value.trim());
   }
 
@@ -500,12 +498,24 @@
 
   function showDetail(r) {
     if(!r) return;
-    $('detail-title').textContent=`${r.h.hospitalName} — ${r.ev.level}`;
+    $('detail-title').textContent=`${r.h.hospitalName}`;
     const recent=recentCaseRows(r);
     const comments=[r.h.insComments&&`Insurance: ${r.h.insComments}`,r.h.cityComments&&`City: ${r.h.cityComments}`,r.h.doctorComments&&`Doctors: ${r.h.doctorComments}`].filter(Boolean).join('\n');
     const compQuality=r.proc.separateComponent
       ? (r.useBase?`${r.proc.componentLabel} separation available in enough historical rows; target fit uses estimated base bill.`:`${r.proc.componentLabel} is intended separately, but historical device capture is incomplete; target fit currently uses total bill and is lower-confidence.`)
       : (r.medComponent!=null?`Median captured device/implant billed: ${fmtMoney(r.medComponent)}.`:'');
+    const selectedInsurer=state.lastSearch?.insurer||'';
+    const selectedTpa=state.lastSearch?.tpa||'';
+    const insurerPanel=Object.entries(r.h.insurerRaw||{}).map(([name,val])=>{
+      const yes=String(val||'').trim().toLowerCase()==='yes';
+      const selected=insurerCanon(name)===insurerCanon(selectedInsurer);
+      return `<div class="panel-row ${selected?'selected-payer':''}"><span>${esc(name)}</span><b class="${yes?'yes':'no'}">${yes?'Yes':(String(val||'').trim()||'—')}</b></div>`;
+    }).join('');
+    const tpaPanel=Object.entries(r.h.tpaRaw||{}).map(([name,val])=>{
+      const yes=String(val||'').trim().toLowerCase()==='yes';
+      const selected=!/in[- ]?house|self/i.test(selectedTpa) && tpaCanon(name)===tpaCanon(selectedTpa);
+      return `<div class="panel-row ${selected?'selected-payer':''}"><span>${esc(name)}</span><b class="${yes?'yes':'no'}">${yes?'Yes':(String(val||'').trim()||'—')}</b></div>`;
+    }).join('');
 
     $('hospital-detail').innerHTML=`
       <div class="detail-section">
@@ -538,7 +548,21 @@
         </div>
       </div>
 
-      ${compQuality?`<div class="device-note"><strong>Component handling:</strong> ${esc(compQuality)}</div>`:''}
+
+      <div class="empanelment-master">
+        <div class="empanel-list">
+          <h3>Insurer Empanelment</h3>
+          <div class="selected-summary"><span>Selected insurer</span><strong>✓ ${esc(selectedInsurer)} — YES</strong></div>
+          <div class="panel-scroll">${insurerPanel}</div>
+        </div>
+        <div class="empanel-list">
+          <h3>TPA Empanelment</h3>
+          <div class="selected-summary"><span>Selected TPA</span><strong>✓ ${esc(selectedTpa)} — YES</strong></div>
+          <div class="panel-scroll">${/in[- ]?house|self/i.test(selectedTpa)?`<div class="panel-row selected-payer"><span>In-House / Self</span><b class="yes">Yes</b></div>`:''}${tpaPanel}</div>
+        </div>
+      </div>
+
+            ${compQuality?`<div class="device-note"><strong>Component handling:</strong> ${esc(compQuality)}</div>`:''}
       ${comments?`<div class="warning-box ${r.restriction.severity==='hard'?'warning-hard':''}"><strong>Current operational comments — review before giving this option:</strong>\n${esc(comments)}</div>`:''}
 
       <div class="recent-block">
@@ -653,7 +677,9 @@
     $('sort-by').addEventListener('change',()=>state.currentResults.length&&renderResults(state.currentResults));
     $('export-btn').addEventListener('click',exportOptions);
     $('refresh-btn').addEventListener('click',()=>loadData(true));
-    $('detail-close').addEventListener('click',()=>$('detail-wrap').classList.remove('open'));
+    $('detail-close').addEventListener('click',()=>{ $('detail-wrap').classList.remove('open'); $('detail-wrap').setAttribute('aria-hidden','true'); });
+    $('detail-wrap').addEventListener('click',e=>{ if(e.target===$('detail-wrap')){ $('detail-wrap').classList.remove('open'); $('detail-wrap').setAttribute('aria-hidden','true'); } });
+    document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ $('detail-wrap').classList.remove('open'); $('detail-wrap').setAttribute('aria-hidden','true'); } });
     $('pincode').addEventListener('input',()=>{
       const pin=$('pincode').value.replace(/\D/g,'').slice(0,6); $('pincode').value=pin;
       if(!pin) $('pin-hint').textContent='Adds approximate distance from patient pincode.';

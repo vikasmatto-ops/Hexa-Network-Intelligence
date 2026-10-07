@@ -3,175 +3,108 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#10233f" />
-  <title>Hexa Network Intelligence</title>
+  <meta name="theme-color" content="#0f2a44" />
+  <title>Hexa Hospital Planner</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-<div class="app-shell">
+<div class="shell">
   <aside class="sidebar">
-    <div class="brand">
-      <div class="brand-mark">H</div>
-      <div><strong>Hexa</strong><span>Network Intelligence</span></div>
-    </div>
+    <div class="brand"><div class="brand-mark">H</div><div><strong>Hexa</strong><span>Hospital Planner</span></div></div>
     <nav>
-      <button class="nav-item active" data-scroll="planner-section">◎ Smart Hospital Finder</button>
-      <button class="nav-item" data-scroll="hospital-master">▦ Partner Hospital List</button>
-      <button class="nav-item" data-scroll="deduction-section">△ Deduction Watch</button>
-      <button class="nav-item" data-scroll="methodology">◉ How Ranking Works</button>
+      <button class="nav-item active" data-scroll="planner-section">Hospital Finder</button>
+      <button class="nav-item" data-scroll="hospital-master">Partner Hospital List</button>
+      <button class="nav-item" data-scroll="methodology">How Ranking Works</button>
     </nav>
-    <div class="sidebar-note">
-      <span class="live-dot"></span>
-      <div><strong>Live source</strong><br><span>Hospital Network + ASP Data</span></div>
-    </div>
+    <div class="side-live"><i></i><div><strong>Live Google Sheet</strong><span>Hospital Network + ASP Data</span></div></div>
   </aside>
 
   <main>
     <header class="topbar">
-      <div>
-        <h1>Smart Hospital Finder & Case Planner</h1>
-        <p>For KYP hospital selection after policy review is completed in CRM.</p>
-      </div>
-      <div class="top-actions">
-        <button id="refresh-btn" class="ghost-btn">↻ Refresh</button>
-        <div class="sync-pill" id="sync-pill">Loading live data…</div>
-      </div>
+      <div><h1>Smart Hospital Finder</h1><p>Choose 4–5 suitable partner hospitals using current empanelment + historical economics.</p></div>
+      <div class="top-actions"><button id="refresh-btn" class="btn secondary">Refresh</button><span id="sync-pill" class="live-pill">Loading…</span></div>
     </header>
 
-    <section class="workflow-banner">
-      <div class="step done"><b>1</b><span>Lead received</span></div><i>›</i>
-      <div class="step done"><b>2</b><span>Policy + OPD + KYP docs collected</span></div><i>›</i>
-      <div class="step done"><b>3</b><span>KYP completed in CRM</span></div><i>›</i>
-      <div class="step current"><b>4</b><span>Choose 4–5 best partner hospitals</span></div><i>›</i>
-      <div class="step"><b>5</b><span>Patient selects hospital</span></div>
+    <section class="planner-card" id="planner-section">
+      <div class="planner-head">
+        <div><h2>Plan a case</h2><p>Empanelment is a hard gate. ASP history ranks only hospitals that are currently eligible.</p></div>
+        <button id="reset-btn" class="text-btn">Reset</button>
+      </div>
+      <div class="filters-grid">
+        <label><span>City *</span><select id="city"></select></label>
+        <label><span>Pincode</span><input id="pincode" maxlength="6" inputmode="numeric" placeholder="122002"><small id="pin-hint">Optional · enables distance</small></label>
+        <label><span>Procedure *</span><select id="procedure"></select></label>
+        <label><span>Target Bill</span><input id="target" inputmode="numeric"><small id="target-note"></small></label>
+        <label><span>Insurer *</span><select id="insurer"></select></label>
+        <label><span>TPA *</span><select id="tpa"></select></label>
+        <label><span>Distance</span><select id="radius"><option value="10">10 km</option><option value="25" selected>25 km</option><option value="50">50 km</option><option value="">Any</option></select></label>
+        <button class="btn primary" id="find-btn">Find Hospitals</button>
+      </div>
+      <div class="eligibility-rule">
+        <strong>Eligible =</strong>
+        <span>Sheet 1 partner</span><i>+</i><span>Active</span><i>+</i><span>Insurer = YES</span><i>+</i><span>TPA = YES</span>
+        <label><input type="checkbox" id="active-only" checked> Active only</label>
+        <label><input type="checkbox" id="include-restricted"> Include hold/restricted</label>
+      </div>
+      <div id="eligibility-foot" class="eligibility-foot">Eligibility is checked only from Sheet 1.</div>
     </section>
 
-    <section class="summary-grid">
-      <div class="summary-card"><span>Partner Hospitals</span><strong id="kpi-partners">—</strong><small>Sheet 1 master list</small></div>
-      <div class="summary-card"><span>Active Hospitals</span><strong id="kpi-active">—</strong><small>currently working</small></div>
-      <div class="summary-card"><span>Historical Cases</span><strong id="kpi-cases">—</strong><small>ASP evidence base</small></div>
-      <div class="summary-card"><span>Unmatched ASP Names</span><strong id="kpi-unmatched">—</strong><small>not used as partner options</small></div>
+    <section class="results-section">
+      <div class="results-head">
+        <div><h2>Recommended Hospital Options</h2><p id="result-subtitle">Enter case details to see 4–5 options.</p></div>
+        <div class="results-actions"><select id="sort-by"><option value="best">Best match</option><option value="distance">Nearest</option><option value="deduction">Lowest deduction</option><option value="recent">Most recent evidence</option><option value="approval">Highest approval %</option></select><button id="export-btn" class="btn secondary" disabled>Export</button></div>
+      </div>
+
+      <div class="result-column-heads" aria-hidden="true">
+        <span>#</span><span>Hospital</span><span>Empanelment</span><span>Bill vs Target</span><span>Approval</span><span>Deduction</span><span>History</span><span></span>
+      </div>
+      <div class="recommendations" id="recommendations"><div class="empty-state">Choose filters and click <b>Find Hospitals</b>.</div></div>
+
+      <div class="deduction-strip" id="deduction-section">
+        <div class="section-mini-head"><strong>Major Deduction Watch</strong><span>Eligible hospitals with the biggest Bill − Approval gap</span></div>
+        <div id="deduction-table"><div class="muted-box">Run a search first.</div></div>
+      </div>
+
+      <details class="map-details">
+        <summary>Map / nearby options <span id="map-caption">Add pincode for distance</span></summary>
+        <div id="map"></div>
+        <small>Straight-line distance from pincode centroid; use for planning, not road travel time.</small>
+      </details>
     </section>
 
-    <section class="planner-layout" id="planner-section">
-      <div class="filter-card card">
-        <div class="card-title">
-          <div><h2>Plan a Case</h2><p>Only Sheet-1 partner hospitals are eligible.</p></div>
-          <button id="reset-btn" class="ghost-btn">Reset</button>
-        </div>
-
-        <label>City *</label>
-        <select id="city"></select>
-
-        <label>Pincode <span>(optional)</span></label>
-        <input id="pincode" maxlength="6" placeholder="e.g. 122002" inputmode="numeric" />
-        <div class="hint" id="pin-hint">Adds approximate distance from patient pincode.</div>
-
-        <label>Distance radius</label>
-        <select id="radius">
-          <option value="10">Within 10 km</option>
-          <option value="25" selected>Within 25 km</option>
-          <option value="50">Within 50 km</option>
-          <option value="">No distance limit</option>
-        </select>
-
-        <label>Procedure *</label>
-        <select id="procedure"></select>
-
-        <label>Target Bill Amount (₹)</label>
-        <input id="target" inputmode="numeric" />
-        <div class="hint" id="target-note"></div>
-
-        <label>Insurer *</label>
-        <select id="insurer"></select>
-
-        <label>TPA *</label>
-        <select id="tpa"></select>
-
-        <div class="check-row"><input type="checkbox" id="active-only" checked><label for="active-only">Active hospitals only</label></div>
-        <div class="check-row"><input type="checkbox" id="include-restricted"><label for="include-restricted">Include hospitals with matching hold/restriction</label></div>
-
-        <button class="primary-btn" id="find-btn">Find Best Hospitals</button>
-        <div class="filter-foot" id="eligibility-foot">Empanelment is checked against Sheet 1 before economics are scored.</div>
-      </div>
-
-      <div class="results-area">
-        <div class="results-toolbar">
-          <div>
-            <h2>Recommended Hospital Options</h2>
-            <p id="result-subtitle">Select case details to rank 4–5 suitable hospitals.</p>
-          </div>
-          <div class="toolbar-actions">
-            <select id="sort-by" class="sort-select">
-              <option value="best">Sort: Best Match</option>
-              <option value="distance">Sort: Nearest</option>
-              <option value="deduction">Sort: Lowest Deduction</option>
-              <option value="recent">Sort: Most Recent Evidence</option>
-              <option value="approval">Sort: Highest Approval %</option>
-            </select>
-            <button id="export-btn" class="ghost-btn" disabled>⇩ Export Options</button>
-          </div>
-        </div>
-
-        <div class="results-map-grid">
-          <div class="recommendations" id="recommendations">
-            <div class="empty-state">Choose filters and click <strong>Find Best Hospitals</strong>.</div>
-          </div>
-          <div class="map-card card">
-            <div class="map-head"><strong>Distance Map</strong><span id="map-caption">Pincode optional</span></div>
-            <div id="map"></div>
-            <div class="map-note">Distance is straight-line from pincode centroids, not road travel distance.</div>
-          </div>
-        </div>
-      </div>
+    <section class="hospital-detail-wrap" id="detail-wrap">
+      <div class="detail-head"><div><h2>Hospital Evidence</h2><p id="detail-title">Click a recommended hospital to inspect evidence.</p></div><button id="detail-close" class="text-btn" type="button">Hide</button></div>
+      <div id="hospital-detail" class="detail-empty">No hospital selected.</div>
     </section>
 
-    <section class="detail-grid">
-      <div class="card detail-card">
-        <div class="card-title"><div><h2>Selected Hospital Intelligence</h2><p id="detail-title">Select a recommended hospital.</p></div></div>
-        <div id="hospital-detail" class="detail-empty">Historical economics, exact-match recency, device information and current comments will appear here.</div>
+    <details class="master-details" id="hospital-master">
+      <summary>Partner Hospital List <span>Sheet 1 = hospitals currently working with us</span></summary>
+      <div class="master-inner">
+        <div class="table-tools"><input id="hospital-search" placeholder="Search hospital / city / pincode"><span id="table-summary"></span></div>
+        <div class="table-wrap"><table><thead><tr><th>Hospital</th><th>City</th><th>Pincode</th><th>Status</th><th>MOP</th><th>Coverage</th><th>Insurance Comments</th><th>City Comments</th></tr></thead><tbody id="hospital-table-body"></tbody></table></div>
       </div>
+    </details>
 
-      <div class="card risk-card" id="deduction-section">
-        <div class="card-title"><div><h2>Major Deduction Watch</h2><p>Bill vs approval gap for the selected procedure/insurer/TPA evidence.</p></div></div>
-        <div class="risk-head"><span>Hospital</span><span>Median Bill</span><span>Median Approval</span><span>Gap</span></div>
-        <div id="deduction-table" class="detail-empty">Run a search to identify deduction-heavy hospitals.</div>
-      </div>
-    </section>
-
-    <section class="card hospital-master" id="hospital-master">
-      <div class="card-title">
-        <div><h2>Hospital List — Working With Us</h2><p>Source of truth: Sheet 1 “Hospital network”. Historical ASP-only hospitals are never treated as partner options.</p></div>
-        <div class="table-controls"><input id="hospital-search" placeholder="Search hospital / city / pincode" /></div>
-      </div>
-      <div class="table-summary" id="table-summary"></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Hospital</th><th>City</th><th>Pincode</th><th>Status</th><th>MOP</th><th>Coverage</th><th>Insurance Comments</th><th>City Comments</th></tr></thead>
-          <tbody id="hospital-table-body"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card methodology" id="methodology">
-      <div class="card-title"><div><h2>How the recommendation works</h2><p>Decision support, not a replacement for CRM KYP or final human review.</p></div></div>
+    <details class="master-details" id="methodology">
+      <summary>How Ranking Works</summary>
       <div class="method-grid">
-        <div><b>1. Eligibility first</b><span>Partner hospital → current status → insurer panel → TPA panel → city/distance.</span></div>
-        <div><b>2. Historical evidence</b><span>Exact procedure + insurer + TPA is preferred. If too sparse, the tool clearly labels insurer-level or procedure-only fallback evidence.</span></div>
-        <div><b>3. Economics</b><span>Target bill fit, approval realization and bill-vs-approval deductions are scored separately.</span></div>
-        <div><b>4. Recency & confidence</b><span>Last exact-match case, last procedure case, usable sample size and data completeness affect confidence.</span></div>
-        <div><b>5. Current comments</b><span>Matching “hold / do not give / low package / restricted” comments are highlighted and excluded by default when clearly relevant.</span></div>
-        <div><b>6. Human choice</b><span>The KYP team gives 4–5 suitable options; the patient chooses the hospital.</span></div>
+        <div><b>1. Empanelment first</b><span>Hospital is shown only if Sheet 1 says the insurer and TPA are panelled and the hospital is eligible.</span></div>
+        <div><b>2. Target fit</b><span>Historical bill is compared with your procedure target; device components are handled separately where applicable.</span></div>
+        <div><b>3. Approval & deductions</b><span>Median approval, approval realization and Bill − Approval deduction are visible together.</span></div>
+        <div><b>4. Case volume</b><span>Comparable historical case count is shown so thin evidence is obvious.</span></div>
+        <div><b>5. Recency</b><span>Last exact insurer + TPA case and last procedure case are shown.</span></div>
+        <div><b>6. Current comments</b><span>Hold / low package / do-not-give instructions are surfaced before the team offers an option.</span></div>
       </div>
-    </section>
+    </details>
+
+    <!-- Compatibility nodes used by the data layer -->
+    <div class="compat"><span id="kpi-partners"></span><span id="kpi-active"></span><span id="kpi-cases"></span><span id="kpi-unmatched"></span></div>
   </main>
 </div>
-
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<!-- Re-use the comprehensive pincode coordinate dictionary from the existing dashboard. Keep the old repo live, or later copy pincodes.js into this repo and change the src to ./pincodes.js. -->
 <script src="https://vikasmatto-ops.github.io/Hexa-KYP-Dashboard-/pincodes.js?v=36"></script>
 <script src="config.js"></script>
 <script src="targets.js"></script>

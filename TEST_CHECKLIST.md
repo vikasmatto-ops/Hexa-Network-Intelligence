@@ -1,41 +1,18 @@
-# UAT checklist
+# V5 Test Checklist
 
-Before replacing the old dashboard, verify these cases in the live V3 site.
-
-## Core logic
-
-- Sheet-1 inactive hospital does not appear when **Active hospitals only** is checked.
-- Hospital with insurer = No does not appear for that insurer.
-- Hospital with TPA = No does not appear for that TPA.
-- In-House / Self works without a Sheet-1 TPA column.
-- ASP-only hospital never appears as a recommendation.
-- Gurgaon and Gurugram resolve to the same city group.
-- MAX Bupa historical rows correctly support current Niva Bupa evidence.
-
-## Economics
-
-- Gynaecomastia / ICICI / In-House at Mayom shows historical evidence and Last Exact Match date.
-- Target variance is calculated from median bill (or estimated base bill when reliable component separation is available).
-- Bill-vs-approval deduction % and ₹ gap are visible.
-- Hospitals with >=20% median deduction are visually highlighted.
-- Top 5 export contains the same hospitals shown on screen.
-
-## Procedure-specific
-
-- Hernia shows mesh/tacker note.
-- SCOLA is detected from Discharge Remarks, not only Procedure.
-- Varicose bilateral excludes VenaSeal cases.
-- VenaSeal bilateral and unilateral are separated using laterality text where available.
-
-## Distance / map
-
-- Enter 122002 and verify map/distance values render.
-- 10 km / 25 km / 50 km radius changes eligible options.
-- Missing pincode coordinates do not break recommendation logic.
-
-## Current restrictions
-
-- Procedure/insurer-specific hold comments are highlighted.
-- Strong matching holds are excluded by default.
-- Turning on **Include hospitals with matching hold/restriction** makes them visible for manual review.
-- Nuanced exception comments remain visible to the KYP team.
+- [ ] Dashboard loads live Hospital Network + ASP Data.
+- [ ] City, Procedure, Insurer and TPA filters populate.
+- [ ] Search never recommends an ASP-only hospital absent from Sheet 1.
+- [ ] Active-only search excludes inactive/on-hold hospitals.
+- [ ] Every recommended row visibly shows `EMPANELLED`, `Insurer YES`, `TPA YES`.
+- [ ] A hospital with insurer = No in Sheet 1 never qualifies for that insurer.
+- [ ] A hospital with TPA = No in Sheet 1 never qualifies for that TPA.
+- [ ] Matching hard operational restriction is excluded unless Include restricted/hold is checked.
+- [ ] Median bill, target variance, median approval, approval realization, deduction amount/% are shown.
+- [ ] Major deduction rows are highlighted.
+- [ ] Comparable case count, last exact case, last procedure case and confidence are shown.
+- [ ] Pincode enables approximate distance where coordinates exist.
+- [ ] Map expands only when requested.
+- [ ] Clicking a result opens detailed evidence; detail is hidden by default.
+- [ ] Partner Hospital List retains old-style table/coverage/comments.
+- [ ] Export outputs top 5 options.

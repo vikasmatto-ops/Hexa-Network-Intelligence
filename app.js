@@ -449,30 +449,34 @@
       $('recommendations').innerHTML='<div class="empty-state">No Sheet-1 partner hospital passed the current status + insurer + TPA + city/distance filters. Try widening distance or reviewing restricted hospitals.</div>';
       $('deduction-table').innerHTML='<div class="detail-empty">No eligible hospitals for this search.</div>';
       $('hospital-detail').innerHTML='<div class="detail-empty">No hospital selected.</div>';
+      $('detail-wrap').classList.remove('open');
       drawMap([], $('pincode').value.trim()); return;
     }
 
+    const insurer=state.lastSearch?.insurer||'';
+    const tpa=state.lastSearch?.tpa||'';
     $('recommendations').innerHTML=shown.map((r,i)=>{
       const v=r.variance==null?'—':`${r.variance>=0?'+':''}${r.variance.toFixed(1)}%`;
-      const last=r.lastExact||r.lastEvidence||r.lastProc;
-      const age=daysAgo(last);
       const distance=r.dist==null?'Distance —':`${r.dist.toFixed(1)} km`;
       const riskClass=r.risk.key==='severe'?'high':r.risk.key;
+      const insurerShort=insurer.replace(/(General|Health) Insurance.*/i,'').trim() || insurer;
+      const tpaShort=/in[- ]?house|self/i.test(tpa)?'In-House / Self':tpa.replace(/Insurance TPA.*/i,'').trim() || tpa;
       return `<article class="rec-card ${i===0?'selected':''} ${r.gapPct!=null&&r.gapPct>=CFG.DEDUCTION_HIGH_PCT?'deduction-alert':''}" data-index="${i}">
         <div class="rank ${i===0?'top':''}">${i+1}</div>
         <div class="rec-hospital">
           <div class="hospital-name">${esc(r.h.hospitalName)}</div>
           <div class="subline">${esc(cityLabelFromKey(r.h.cityKey))} · PIN ${esc(r.h.pinCode)} · ${distance}</div>
-          <div class="chip-row">
-            <span class="chip ok">${esc(r.h.status)}</span><span class="chip ok">Insurer ✓</span><span class="chip ok">TPA ✓</span>${evidenceTag(r)}
-            ${r.restriction.severity!=='none'&&r.restriction.severity!=='info'?`<span class="chip ${r.restriction.severity==='hard'?'bad':'warn'}">Restriction review</span>`:''}
-          </div>
+          <div class="chip-row"><span class="chip ok">${esc(r.h.status)}</span>${evidenceTag(r)}${r.restriction.severity!=='none'&&r.restriction.severity!=='info'?`<span class="chip ${r.restriction.severity==='hard'?'bad':'warn'}">Restriction review</span>`:''}</div>
+        </div>
+        <div class="empanel-block">
+          <div class="empanel-title">✓ EMPANELLED</div>
+          <div class="empanel-lines"><span title="${esc(insurer)}">Insurer <b>YES</b></span><span title="${esc(tpa)}">TPA <b>YES</b></span></div>
+          <div class="subline" title="${esc(insurer)} / ${esc(tpa)}">${esc(insurerShort)} · ${esc(tpaShort)}</div>
         </div>
         <div class="metric"><span>${r.useBase?'Median Base Bill':'Median Bill'}</span><strong>${fmtMoney(r.medBill)}</strong><div class="subline ${resultVarianceClass(r.variance)}">${r.variance==null?'No usable bill evidence':v+' vs target'}</div></div>
         <div class="metric"><span>Median Approval</span><strong>${fmtMoney(r.medApproval)}</strong><div class="subline">${r.approvalPct==null?'—':r.approvalPct.toFixed(0)+'% realization'}</div></div>
-        <div class="metric hide-mid"><span>Comparable Cases</span><strong>${r.rows.length}</strong><div class="subline">${esc(r.conf)} confidence</div></div>
-        <div class="metric hide-mid"><span>Last Exact Case</span><strong>${fmtDate(r.lastExact)}</strong><div class="subline">${r.lastExact?daysAgo(r.lastExact)+' days ago':'No exact case'}</div></div>
-        <div class="metric"><span>Deduction Gap</span><strong class="risk-${riskClass}">${r.gapPct==null?'—':r.gapPct.toFixed(1)+'%'}</strong><div class="subline">${fmtMoney(r.medGap)}</div></div>
+        <div class="metric"><span>Bill − Approval</span><strong class="risk-${riskClass}">${r.gapPct==null?'—':r.gapPct.toFixed(1)+'%'}</strong><div class="subline">${fmtMoney(r.medGap)}</div></div>
+        <div class="history-lines"><strong>${r.rows.length} cases · ${esc(r.conf)}</strong><small>Last exact: ${fmtDate(r.lastExact)}</small><small>Last procedure: ${fmtDate(r.lastProc)}</small></div>
         <div class="arrow">›</div>
       </article>`;
     }).join('');
@@ -480,11 +484,13 @@
     document.querySelectorAll('.rec-card').forEach(card=>card.addEventListener('click',()=>{
       document.querySelectorAll('.rec-card').forEach(x=>x.classList.remove('selected'));
       card.classList.add('selected');
+      $('detail-wrap').classList.add('open');
       showDetail(shown[Number(card.dataset.index)]);
     }));
 
     renderDeductionWatch(sorted);
-    showDetail(shown[0]);
+    $('detail-wrap').classList.remove('open');
+    $('hospital-detail').innerHTML='<div class="detail-empty">Click any recommended hospital to see case-level evidence and current comments.</div>';
     drawMap(shown,$('pincode').value.trim());
   }
 
@@ -623,7 +629,7 @@
     $('city').selectedIndex=0; $('pincode').value=''; $('radius').value='25'; $('procedure').selectedIndex=0; setTarget(); $('insurer').selectedIndex=0; $('tpa').selectedIndex=0;
     $('active-only').checked=true; $('include-restricted').checked=false; $('sort-by').value='best';
     state.currentResults=[]; state.lastSearch=null; $('export-btn').disabled=true;
-    $('recommendations').innerHTML='<div class="empty-state">Choose filters and click <strong>Find Best Hospitals</strong>.</div>';
+    $('recommendations').innerHTML='<div class="empty-state">Choose filters and click <strong>Find Hospitals</strong>.</div>';
     $('deduction-table').innerHTML='<div class="detail-empty">Run a search to identify deduction-heavy hospitals.</div>';
     $('hospital-detail').innerHTML='<div class="detail-empty">Historical economics, exact-match recency, device information and current comments will appear here.</div>';
     $('result-subtitle').textContent='Select case details to rank 4–5 suitable hospitals.'; $('pin-hint').textContent='Adds approximate distance from patient pincode.'; clearMap();
@@ -647,6 +653,7 @@
     $('sort-by').addEventListener('change',()=>state.currentResults.length&&renderResults(state.currentResults));
     $('export-btn').addEventListener('click',exportOptions);
     $('refresh-btn').addEventListener('click',()=>loadData(true));
+    $('detail-close').addEventListener('click',()=>$('detail-wrap').classList.remove('open'));
     $('pincode').addEventListener('input',()=>{
       const pin=$('pincode').value.replace(/\D/g,'').slice(0,6); $('pincode').value=pin;
       if(!pin) $('pin-hint').textContent='Adds approximate distance from patient pincode.';

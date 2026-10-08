@@ -17,3 +17,6 @@ Procedure business targets and separate-component rules are in `targets.js`.
 
 ## Deployment
 Upload all files to the GitHub Pages repository root and deploy from `main / root`.
+
+## V7 exact-combination evidence
+Hospital detail now shows IPD number, date, bill, approval and gap for the exact same procedure + hospital + insurer + TPA combination. If the ASP source literally contains `##########` in Bill Amount, the UI says so and separates exact-combo evidence from fallback planning benchmarks.

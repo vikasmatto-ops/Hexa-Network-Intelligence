@@ -212,6 +212,7 @@
         city:String(get(r,'City')||'').trim(), cityBucket:String(get(r,'City Bucket')||'').trim(),
         insurer:String(get(r,'Insurance Name')||'').trim(), tpa:String(get(r,'TPA Name')||'').trim(),
         dod:parseDate(get(r,'Discharge Done Date (By Insurance)')) || parseDate(get(r,'DOD')),
+        billRaw:String(get(r,'Bill Amount')||'').trim(), approvalRaw:String(get(r,'Approval Amount')||'').trim(), settlementRaw:String(get(r,'Settlement Amount')||'').trim(),
         bill:parseAmount(get(r,'Bill Amount')), approval:parseAmount(get(r,'Approval Amount')), settlement:parseAmount(get(r,'Settlement Amount')),
         implantName:String(get(r,'Implant Name')||'').trim(), implantCost:parseAmount(get(r,'Implant Cost')), implantBilled:parseAmount(get(r,'Implant Billed Amount')),
         remarks:String(get(r,'Discharge Remarks')||'').trim(),
@@ -281,17 +282,45 @@
   function currentRestriction(h,proc,insurer) {
     const text=[h.insComments,h.cityComments,h.doctorComments].filter(Boolean).join(' | ');
     if(!text) return {severity:'none',label:'None relevant',text:''};
-    const low=text.toLowerCase();
-    const neg=/\bhold\b|do not give|don't give|dont give|not active|stop cashless|low pkg|low package|restricted|not proceed|total hold|inactive/.test(low);
-    if(!neg) return {severity:'info',label:'Comments available',text};
 
-    const global=/hold all|all ins(?:urance)?|total hold|stop cashless/.test(low);
-    const procHit=proc.keywords.some(k=>low.includes(k));
-    const ik=insurerKeyword(insurer); const insurerHit=ik && low.includes(ik);
-    const exception=ik && new RegExp(`(?:except|accept|only\\s+(?:give|given|for)|prefer)[^|\\n]{0,35}${ik.replace(/[-/\\^$*+?.()|[\]{}]/g,'\\$&')}`,'i').test(low);
+    // IMPORTANT: scope restrictions to the clause they appear in.
+    // A hospital comment can mention multiple payers, e.g.
+    // "DO NOT give in GIPSA ... ICICI CC only 13k ...".
+    // The old parser treated any negative phrase anywhere + "ICICI" anywhere
+    // as a hard ICICI restriction and wrongly excluded the hospital.
+    const clauses=text
+      .split(/\n+|\|+|;|\.{2,}/)
+      .map(x=>x.trim())
+      .filter(Boolean);
+    const ik=insurerKeyword(insurer);
+    const escRe=v=>String(v||'').replace(/[-/\^$*+?.()|[\]{}]/g,'\$&');
+    const negRe=/\bhold\b|do not give|don't give|dont give|not active|stop cashless|low pkg|low package|restricted|not proceed|total hold|inactive/;
+    const globalRe=/hold all|all ins(?:urance)?|total hold|stop cashless/;
 
-    if((global || procHit || insurerHit) && !exception) return {severity:'hard',label:'Matching hold / restriction',text};
-    if((global || procHit || insurerHit) && exception) return {severity:'review',label:'Restriction has possible insurer exception — review',text};
+    let reviewHit=false;
+    let relevantNote=false;
+
+    for(const rawClause of clauses){
+      const low=rawClause.toLowerCase();
+      const hasNeg=negRe.test(low);
+      const global=globalRe.test(low);
+      const procHit=proc.keywords.some(k=>low.includes(k));
+      const insurerHit=!!(ik && low.includes(ik));
+      if(procHit || insurerHit) relevantNote=true;
+
+      if(!hasNeg && !global) continue;
+      if(!(global || procHit || insurerHit)) continue;
+
+      // If the same clause explicitly creates an exception/preference for the
+      // selected insurer, surface it for review rather than excluding it.
+      const exception=!!(ik && new RegExp(`(?:except|accept|only\s+(?:give|given|for)|prefer|good\s+pkg|good\s+package)[^\n]{0,45}${escRe(ik)}|${escRe(ik)}[^\n]{0,45}(?:except|allowed|active|good\s+pkg|good\s+package)`,'i').test(low));
+      if(exception){ reviewHit=true; continue; }
+
+      return {severity:'hard',label:'Matching hold / restriction',text};
+    }
+
+    if(reviewHit) return {severity:'review',label:'Restriction has selected-insurer exception — review',text};
+    if(relevantNote) return {severity:'info',label:'Selected insurer / procedure note available',text};
     return {severity:'info',label:'Other comments available',text};
   }
 
@@ -345,6 +374,10 @@
     const approvalPct=median(usable.map(c=>c.approval/c.bill*100));
     const gapPct=median(usable.map(c=>Math.max(0,c.bill-c.approval)/c.bill*100));
     const medGap=median(usable.map(c=>Math.max(0,c.bill-c.approval)));
+    const exactUsable=ev.exact.filter(c=>c.bill!=null&&c.approval!=null&&c.bill>0);
+    const exactMedBill=median(exactUsable.map(c=>c.bill));
+    const exactMedApproval=median(ev.exact.map(c=>c.approval));
+    const exactGapPct=median(exactUsable.map(c=>Math.max(0,c.bill-c.approval)/c.bill*100));
     const lastExact=latestDate(ev.exact);
     const lastProc=latestDate(procCases);
     const lastEvidence=latestDate(rows);
@@ -366,7 +399,7 @@
     if(restriction.severity==='hard') score-=35;
     if(restriction.severity==='review') score-=8;
 
-    return {h,proc,procCases,rows,usable,ev,useBase,medBill,medTotalBill,medApproval,medSettlement,medComponent,approvalPct,gapPct,medGap,lastExact,lastProc,lastEvidence,dist,variance,restriction,risk,conf,score};
+    return {h,proc,procCases,rows,usable,ev,useBase,medBill,medTotalBill,medApproval,medSettlement,medComponent,approvalPct,gapPct,medGap,exactUsable,exactMedBill,exactMedApproval,exactGapPct,lastExact,lastProc,lastEvidence,dist,variance,restriction,risk,conf,score};
   }
 
   function sortResults(results,sortBy) {
@@ -461,6 +494,7 @@
       const riskClass=r.risk.key==='severe'?'high':r.risk.key;
       const insurerShort=insurer.replace(/(General|Health) Insurance.*/i,'').trim() || insurer;
       const tpaShort=/in[- ]?house|self/i.test(tpa)?'In-House / Self':tpa.replace(/Insurance TPA.*/i,'').trim() || tpa;
+      const latestExactRow=r.ev.exact.slice().sort((a,b)=>(b.dod?.getTime()||0)-(a.dod?.getTime()||0))[0] || null;
       return `<article class="rec-card ${i===0?'selected':''} ${r.gapPct!=null&&r.gapPct>=CFG.DEDUCTION_HIGH_PCT?'deduction-alert':''}" data-index="${i}">
         <div class="rank ${i===0?'top':''}">${i+1}</div>
         <div class="rec-hospital">
@@ -470,10 +504,10 @@
           <div class="chip-row"><span class="chip ok">${esc(r.h.status)}</span>${evidenceTag(r)}${r.restriction.severity!=='none'&&r.restriction.severity!=='info'?`<span class="chip ${r.restriction.severity==='hard'?'bad':'warn'}">Restriction review</span>`:''}</div>
           <div class="subline" title="${esc(insurer)} / ${esc(tpa)}">${esc(insurerShort)} · ${esc(tpaShort)}</div>
         </div>
-        <div class="metric"><span>${r.useBase?'Base bill':'Median bill'}</span><strong>${fmtMoney(r.medBill)}</strong><div class="subline ${resultVarianceClass(r.variance)}">${r.variance==null?'No usable bill':v+' vs target'}</div></div>
-        <div class="metric"><span>Approval</span><strong>${fmtMoney(r.medApproval)}</strong><div class="subline">${r.approvalPct==null?'—':r.approvalPct.toFixed(0)+'% realization'}</div></div>
+        <div class="metric"><span>${r.ev.rank===3?'Exact-combo ':r.ev.rank===2?'Insurer-match ':'Procedure-history '}${r.useBase?'base bill':'median bill'}</span><strong>${fmtMoney(r.medBill)}</strong><div class="subline ${resultVarianceClass(r.variance)}">${r.variance==null?'No usable bill':v+' vs target'}</div></div>
+        <div class="metric"><span>${r.ev.rank===3?'Exact-combo ':r.ev.rank===2?'Insurer-match ':'Procedure-history '}approval</span><strong>${fmtMoney(r.medApproval)}</strong><div class="subline">${r.approvalPct==null?'—':r.approvalPct.toFixed(0)+'% realization'}</div></div>
         <div class="metric"><span>Deduction</span><strong class="risk-${riskClass}">${r.gapPct==null?'—':r.gapPct.toFixed(1)+'%'}</strong><div class="subline">${fmtMoney(r.medGap)}</div></div>
-        <div class="history-lines"><strong>${r.rows.length} cases · ${esc(r.conf)}</strong><small>Exact: ${fmtDate(r.lastExact)}</small><small>Procedure: ${fmtDate(r.lastProc)}</small></div>
+        <div class="history-lines"><strong>Exact combo: ${r.ev.exact.length}${latestExactRow?.ipd?` · IPD ${esc(latestExactRow.ipd)}`:''}</strong><small>Last exact: ${fmtDate(r.lastExact)} · Confidence ${esc(r.conf)}</small><small>Planning basis: ${esc(r.ev.level)} · n=${r.rows.length}</small></div>
       </article>`;
     }).join('');
 
@@ -492,14 +526,25 @@
     drawMap(shown,$('pincode').value.trim());
   }
 
-  function recentCaseRows(r) {
+  function recentExactRows(r) {
+    return r.ev.exact.slice().sort((a,b)=>(b.dod?.getTime()||0)-(a.dod?.getTime()||0)).slice(0,10);
+  }
+  function recentPlanningRows(r) {
     return r.rows.filter(c=>c.dod).sort((a,b)=>b.dod-a.dod).slice(0,5);
+  }
+  function sourceBillStatus(c) {
+    if(c.bill!=null) return fmtMoney(c.bill);
+    const raw=String(c.billRaw||'').trim();
+    if(raw && raw.includes('#')) return 'Unavailable in source (##########)';
+    if(raw) return `Unavailable (${raw})`;
+    return 'Missing in source';
   }
 
   function showDetail(r) {
     if(!r) return;
     $('detail-title').textContent=`${r.h.hospitalName}`;
-    const recent=recentCaseRows(r);
+    const exactRecent=recentExactRows(r);
+    const planningRecent=recentPlanningRows(r);
     const comments=[r.h.insComments&&`Insurance: ${r.h.insComments}`,r.h.cityComments&&`City: ${r.h.cityComments}`,r.h.doctorComments&&`Doctors: ${r.h.doctorComments}`].filter(Boolean).join('\n');
     const compQuality=r.proc.separateComponent
       ? (r.useBase?`${r.proc.componentLabel} separation available in enough historical rows; target fit uses estimated base bill.`:`${r.proc.componentLabel} is intended separately, but historical device capture is incomplete; target fit currently uses total bill and is lower-confidence.`)
@@ -531,8 +576,10 @@
           <h3>Decision evidence</h3>
           <div class="mini-row"><span>Evidence level</span><strong>${esc(r.ev.level)}</strong></div>
           <div class="mini-row"><span>Exact insurer + TPA cases</span><strong>${r.ev.exact.length}</strong></div>
+          <div class="mini-row"><span>Exact cases with usable bill + approval</span><strong>${r.exactUsable.length}</strong></div>
+          <div class="mini-row"><span>Planning evidence basis</span><strong>${esc(r.ev.level)}</strong></div>
           <div class="mini-row"><span>Planning evidence cases</span><strong>${r.rows.length}</strong></div>
-          <div class="mini-row"><span>Usable bill + approval pairs</span><strong>${r.usable.length}</strong></div>
+          <div class="mini-row"><span>Usable planning bill + approval pairs</span><strong>${r.usable.length}</strong></div>
           <div class="mini-row"><span>Confidence</span><strong>${esc(r.conf)}</strong></div>
           <div class="mini-row"><span>Approx distance</span><strong>${r.dist==null?'—':r.dist.toFixed(1)+' km'}</strong></div>
           ${r.medComponent!=null?`<div class="mini-row"><span>Median captured ${esc(r.proc.componentLabel||'implant/device')}</span><strong>${fmtMoney(r.medComponent)}</strong></div>`:''}
@@ -565,13 +612,25 @@
             ${compQuality?`<div class="device-note"><strong>Component handling:</strong> ${esc(compQuality)}</div>`:''}
       ${comments?`<div class="warning-box ${r.restriction.severity==='hard'?'warning-hard':''}"><strong>Current operational comments — review before giving this option:</strong>\n${esc(comments)}</div>`:''}
 
-      <div class="recent-block">
-        <h3>Recent comparable historical cases</h3>
-        ${recent.length?`<div class="recent-table"><div class="recent-head"><span>Date</span><span>Insurer / TPA</span><span>Bill</span><span>Approval</span><span>Gap</span></div>${recent.map(c=>{
+      <div class="recent-block exact-block">
+        <h3>Exact same procedure + hospital + insurer + TPA</h3>
+        <div class="exact-summary">${r.ev.exact.length?`${r.ev.exact.length} exact historical case${r.ev.exact.length===1?'':'s'} found. IPD numbers below are from ASP Data.`:'No exact historical case found for this insurer + TPA combination.'}</div>
+        ${exactRecent.length?`<div class="recent-table exact-table"><div class="recent-head"><span>IPD</span><span>Date</span><span>Insurer / TPA</span><span>Bill</span><span>Approval</span><span>Gap</span></div>${exactRecent.map(c=>{
           const gp=c.bill&&c.approval!=null?Math.max(0,c.bill-c.approval)/c.bill*100:null;
-          return `<div class="recent-row"><span>${fmtDate(c.dod)}</span><span>${esc(c.insurer)}<small>${esc(c.tpa||'—')}</small></span><span>${fmtMoney(c.bill)}</span><span>${fmtMoney(c.approval)}</span><span class="${gp!=null&&gp>=20?'danger-text':''}">${gp==null?'—':gp.toFixed(0)+'%'}</span></div>`;
-        }).join('')}</div>`:'<div class="detail-empty compact">No dated comparable cases.</div>'}
-      </div>`;
+          const billMissing=c.bill==null;
+          return `<div class="recent-row ${billMissing?'source-missing-row':''}"><span><strong>${esc(c.ipd||'—')}</strong><small>ASP row ${c.sourceRow}</small></span><span>${fmtDate(c.dod)}</span><span>${esc(c.insurer)}<small>${esc(c.tpa||'—')}</small></span><span class="${billMissing?'source-missing':''}">${esc(sourceBillStatus(c))}</span><span>${fmtMoney(c.approval)}</span><span class="${gp!=null&&gp>=20?'danger-text':''}">${gp==null?'—':gp.toFixed(0)+'%'}</span></div>`;
+        }).join('')}</div>`:'<div class="detail-empty compact">No exact insurer + TPA case.</div>'}
+        ${r.ev.exact.some(c=>c.bill==null)?`<div class="source-warning"><strong>Why some Bill Amounts are blank:</strong> the ASP source itself contains <code>##########</code> in Bill Amount for those IPDs, so the dashboard cannot recover a number that is not present in the source feed.</div>`:''}
+      </div>
+
+      ${r.ev.rank<3?`<div class="recent-block fallback-block">
+        <h3>Fallback planning evidence used for ranking</h3>
+        <div class="exact-summary">Exact-combo billing evidence was insufficient, so ranking uses <strong>${esc(r.ev.level)}</strong>. This is a benchmark only, not the exact insurer + TPA history.</div>
+        ${planningRecent.length?`<div class="recent-table"><div class="recent-head fallback-head"><span>IPD</span><span>Date</span><span>Insurer / TPA</span><span>Bill</span><span>Approval</span><span>Gap</span></div>${planningRecent.map(c=>{
+          const gp=c.bill&&c.approval!=null?Math.max(0,c.bill-c.approval)/c.bill*100:null;
+          return `<div class="recent-row fallback-row"><span><strong>${esc(c.ipd||'—')}</strong></span><span>${fmtDate(c.dod)}</span><span>${esc(c.insurer)}<small>${esc(c.tpa||'—')}</small></span><span>${fmtMoney(c.bill)}</span><span>${fmtMoney(c.approval)}</span><span class="${gp!=null&&gp>=20?'danger-text':''}">${gp==null?'—':gp.toFixed(0)+'%'}</span></div>`;
+        }).join('')}</div>`:'<div class="detail-empty compact">No fallback planning rows.</div>'}
+      </div>`:''}`;
   }
 
   function renderDeductionWatch(results) {

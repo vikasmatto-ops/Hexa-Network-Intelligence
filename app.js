@@ -400,37 +400,57 @@
     const avgVariance=avgBill!=null&&target ? (avgBill-target)/target*100 : null;
     const risk=riskFromPct(avgGapPct);
 
-    // 100 = target achieved. Upside above target is rewarded, capped to prevent one outlier
-    // from dominating the recommendation. Below-target ATS is penalised proportionally.
-    const atsScore=avgBill==null||!target?25:clamp((avgBill/target)*100,0,140);
-    const approvalValueScore=avgApproval==null||!target?25:clamp((avgApproval/target)*100,0,140);
+    // Business-outcome index. Target is a floor/benchmark, NOT a bullseye.
+    // Do not cap strong hospitals at 140%; that previously flattened materially
+    // different hospitals into the same score and caused stable-sort order bugs.
+    const atsIndex=avgBill==null||!target?25:clamp((avgBill/target)*100,0,300);
+    const approvalValueIndex=avgApproval==null||!target?25:clamp((avgApproval/target)*100,0,300);
     const sample=clamp(Math.log2(usable.length+1)*25,0,100);
     const recencyDate=lastExact||lastEvidence||lastProc;
     const recency=recencyDate?clamp(100-daysAgo(recencyDate)/4.0,0,100):20;
-    const deductionScore=avgGapPct==null?45:clamp(100-avgGapPct*3.0,0,100);
+    const deductionScore=avgGapPct==null?45:clamp(100-avgGapPct*2.5,0,100);
     const distanceScore=dist==null?55:clamp(100-dist*2.0,0,100);
     const evidenceBonus=ev.rank===3?8:ev.rank===2?3:ev.rank===1?0:-8;
 
-    // Best Business Outcome weights:
-    // ATS 35% + approval amount 30% + evidence/sample 15% + deduction 10%
-    // + recency 5% + distance 5%, plus exact-evidence bonus.
-    let score=atsScore*.35+approvalValueScore*.30+sample*.15+deductionScore*.10+recency*.05+distanceScore*.05+evidenceBonus;
-    if(restriction.severity==='hard') score-=35;
-    if(restriction.severity==='review') score-=8;
-    score=clamp(score,0,100);
+    // Best Business Outcome: ATS + absolute approval are the main business signals.
+    // Sample size, deductions, recency and distance are supporting signals.
+    let businessScore=atsIndex*.40+approvalValueIndex*.35+sample*.10+deductionScore*.075+recency*.05+distanceScore*.025+evidenceBonus;
+    if(restriction.severity==='hard') businessScore-=40;
+    if(restriction.severity==='review') businessScore-=10;
 
-    return {h,proc,procCases,rows,usable,ev,useBase,medBill,medTotalBill,medApproval,medSettlement,medComponent,approvalPct,gapPct,medGap,exactUsable,exactMedBill,exactMedApproval,exactGapPct,lastExact,lastProc,lastEvidence,dist,variance,restriction,risk,conf,score,avgBill,avgTotalBill,avgApproval,avgApprovalPct,avgGapPct,avgGap,exactAvgBill,exactAvgApproval,avgVariance};
+    // Kept only for backward compatibility with older UI helpers. Ranking uses
+    // businessScore directly so strong hospitals are never flattened into a 100/100 tie.
+    const score=businessScore;
+
+    return {h,proc,procCases,rows,usable,ev,useBase,medBill,medTotalBill,medApproval,medSettlement,medComponent,approvalPct,gapPct,medGap,exactUsable,exactMedBill,exactMedApproval,exactGapPct,lastExact,lastProc,lastEvidence,dist,variance,restriction,risk,conf,score,businessScore,avgBill,avgTotalBill,avgApproval,avgApprovalPct,avgGapPct,avgGap,exactAvgBill,exactAvgApproval,avgVariance};
+  }
+
+  function businessDominates(a,b) {
+    // Sanity gate: if A has at least the same evidence quality, higher ATS,
+    // higher absolute approval AND no worse deduction, A cannot rank below B.
+    if((a.ev?.rank??0) < (b.ev?.rank??0)) return false;
+    if(a.avgBill==null || b.avgBill==null || a.avgApproval==null || b.avgApproval==null || a.avgGapPct==null || b.avgGapPct==null) return false;
+    const noWorse=a.avgBill>=b.avgBill && a.avgApproval>=b.avgApproval && a.avgGapPct<=b.avgGapPct;
+    const strictlyBetter=a.avgBill>b.avgBill || a.avgApproval>b.avgApproval || a.avgGapPct<b.avgGapPct;
+    return noWorse && strictlyBetter;
   }
 
   function sortResults(results,sortBy) {
     const arr=results.slice();
-    if(sortBy==='distance') return arr.sort((a,b)=>(a.dist??9999)-(b.dist??9999) || b.score-a.score);
-    if(sortBy==='deduction') return arr.sort((a,b)=>(a.avgGapPct??999)-(b.avgGapPct??999) || b.score-a.score);
+    if(sortBy==='distance') return arr.sort((a,b)=>(a.dist??9999)-(b.dist??9999) || (b.businessScore??-999)-(a.businessScore??-999));
+    if(sortBy==='deduction') return arr.sort((a,b)=>(a.avgGapPct??999)-(b.avgGapPct??999) || (b.businessScore??-999)-(a.businessScore??-999));
     if(sortBy==='recent') return arr.sort((a,b)=>(b.lastExact?.getTime()||b.lastProc?.getTime()||0)-(a.lastExact?.getTime()||a.lastProc?.getTime()||0));
-    if(sortBy==='ats') return arr.sort((a,b)=>(b.avgBill??-1)-(a.avgBill??-1) || b.score-a.score);
-    if(sortBy==='approval-amount') return arr.sort((a,b)=>(b.avgApproval??-1)-(a.avgApproval??-1) || b.score-a.score);
-    if(sortBy==='approval') return arr.sort((a,b)=>(b.avgApprovalPct??-1)-(a.avgApprovalPct??-1) || b.score-a.score);
-    return arr.sort((a,b)=>b.score-a.score);
+    if(sortBy==='ats') return arr.sort((a,b)=>(b.avgBill??-1)-(a.avgBill??-1) || (b.businessScore??-999)-(a.businessScore??-999));
+    if(sortBy==='approval-amount') return arr.sort((a,b)=>(b.avgApproval??-1)-(a.avgApproval??-1) || (b.businessScore??-999)-(a.businessScore??-999));
+    if(sortBy==='approval') return arr.sort((a,b)=>(b.avgApprovalPct??-1)-(a.avgApprovalPct??-1) || (b.businessScore??-999)-(a.businessScore??-999));
+    return arr.sort((a,b)=>{
+      if(businessDominates(a,b)) return -1;
+      if(businessDominates(b,a)) return 1;
+      return (b.businessScore??-999)-(a.businessScore??-999)
+        || (b.avgApproval??-1)-(a.avgApproval??-1)
+        || (b.avgBill??-1)-(a.avgBill??-1)
+        || (b.usable?.length??0)-(a.usable?.length??0);
+    });
   }
 
   function initMap() {
@@ -619,7 +639,7 @@
           <div class="mini-row"><span>City</span><strong>${esc(cityLabelFromKey(r.h.cityKey))}</strong></div>
           <div class="mini-row"><span>Pincode</span><strong>${esc(r.h.pinCode)}</strong></div>
           <div class="mini-row"><span>Restriction status</span><strong class="restriction-${r.restriction.severity}">${esc(r.restriction.label)}</strong></div>
-          <div class="mini-row"><span>Recommendation score</span><strong>${Math.round(r.score)}/100</strong></div>
+          <div class="mini-row"><span>Business outcome index</span><strong>${Math.round(r.businessScore)}</strong></div>
         </div>
       </div>
 

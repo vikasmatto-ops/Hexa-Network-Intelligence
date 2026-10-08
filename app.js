@@ -384,30 +384,52 @@
     const dist=haversine(userCoord,pinCoord(h.pinCode));
     const variance=medBill!=null&&target ? (medBill-target)/target*100 : null;
     const restriction=currentRestriction(h,proc,insurer);
-    const risk=riskFromPct(gapPct);
     const conf=confidence(ev.rank,rows,usable,lastExact,lastProc);
 
-    const fit=variance==null?28:clamp(100-Math.abs(variance)*3.1,0,100);
-    const approval=approvalPct==null?40:clamp(approvalPct,0,100);
+    // Business-outcome ranking: target is a floor/benchmark, not a bullseye.
+    // Hospitals are NOT penalised for producing a bill above target.
+    // Average Ticket Size (ATS) and average approval amount are the main commercial signals.
+    const avgBill=mean(planningBills);
+    const avgTotalBill=mean(usable.map(c=>c.bill));
+    const avgApproval=mean(usable.map(c=>c.approval));
+    const avgApprovalPct=mean(usable.map(c=>c.approval/c.bill*100));
+    const avgGapPct=mean(usable.map(c=>Math.max(0,c.bill-c.approval)/c.bill*100));
+    const avgGap=mean(usable.map(c=>Math.max(0,c.bill-c.approval)));
+    const exactAvgBill=mean(exactUsable.map(c=>c.bill));
+    const exactAvgApproval=mean(exactUsable.map(c=>c.approval));
+    const avgVariance=avgBill!=null&&target ? (avgBill-target)/target*100 : null;
+    const risk=riskFromPct(avgGapPct);
+
+    // 100 = target achieved. Upside above target is rewarded, capped to prevent one outlier
+    // from dominating the recommendation. Below-target ATS is penalised proportionally.
+    const atsScore=avgBill==null||!target?25:clamp((avgBill/target)*100,0,140);
+    const approvalValueScore=avgApproval==null||!target?25:clamp((avgApproval/target)*100,0,140);
     const sample=clamp(Math.log2(usable.length+1)*25,0,100);
     const recencyDate=lastExact||lastEvidence||lastProc;
-    const recency=recencyDate?clamp(100-daysAgo(recencyDate)/3.5,0,100):20;
-    const deduction=gapPct==null?45:clamp(100-gapPct*3.1,0,100);
-    const distance=dist==null?55:clamp(100-dist*2.0,0,100);
+    const recency=recencyDate?clamp(100-daysAgo(recencyDate)/4.0,0,100):20;
+    const deductionScore=avgGapPct==null?45:clamp(100-avgGapPct*3.0,0,100);
+    const distanceScore=dist==null?55:clamp(100-dist*2.0,0,100);
     const evidenceBonus=ev.rank===3?8:ev.rank===2?3:ev.rank===1?0:-8;
-    let score=fit*.31+approval*.20+sample*.14+recency*.12+deduction*.15+distance*.08+evidenceBonus;
+
+    // Best Business Outcome weights:
+    // ATS 35% + approval amount 30% + evidence/sample 15% + deduction 10%
+    // + recency 5% + distance 5%, plus exact-evidence bonus.
+    let score=atsScore*.35+approvalValueScore*.30+sample*.15+deductionScore*.10+recency*.05+distanceScore*.05+evidenceBonus;
     if(restriction.severity==='hard') score-=35;
     if(restriction.severity==='review') score-=8;
+    score=clamp(score,0,100);
 
-    return {h,proc,procCases,rows,usable,ev,useBase,medBill,medTotalBill,medApproval,medSettlement,medComponent,approvalPct,gapPct,medGap,exactUsable,exactMedBill,exactMedApproval,exactGapPct,lastExact,lastProc,lastEvidence,dist,variance,restriction,risk,conf,score};
+    return {h,proc,procCases,rows,usable,ev,useBase,medBill,medTotalBill,medApproval,medSettlement,medComponent,approvalPct,gapPct,medGap,exactUsable,exactMedBill,exactMedApproval,exactGapPct,lastExact,lastProc,lastEvidence,dist,variance,restriction,risk,conf,score,avgBill,avgTotalBill,avgApproval,avgApprovalPct,avgGapPct,avgGap,exactAvgBill,exactAvgApproval,avgVariance};
   }
 
   function sortResults(results,sortBy) {
     const arr=results.slice();
     if(sortBy==='distance') return arr.sort((a,b)=>(a.dist??9999)-(b.dist??9999) || b.score-a.score);
-    if(sortBy==='deduction') return arr.sort((a,b)=>(a.gapPct??999)-(b.gapPct??999) || b.score-a.score);
+    if(sortBy==='deduction') return arr.sort((a,b)=>(a.avgGapPct??999)-(b.avgGapPct??999) || b.score-a.score);
     if(sortBy==='recent') return arr.sort((a,b)=>(b.lastExact?.getTime()||b.lastProc?.getTime()||0)-(a.lastExact?.getTime()||a.lastProc?.getTime()||0));
-    if(sortBy==='approval') return arr.sort((a,b)=>(b.approvalPct??-1)-(a.approvalPct??-1) || b.score-a.score);
+    if(sortBy==='ats') return arr.sort((a,b)=>(b.avgBill??-1)-(a.avgBill??-1) || b.score-a.score);
+    if(sortBy==='approval-amount') return arr.sort((a,b)=>(b.avgApproval??-1)-(a.avgApproval??-1) || b.score-a.score);
+    if(sortBy==='approval') return arr.sort((a,b)=>(b.avgApprovalPct??-1)-(a.avgApprovalPct??-1) || b.score-a.score);
     return arr.sort((a,b)=>b.score-a.score);
   }
 
@@ -458,9 +480,16 @@
 
   function resultVarianceClass(v) {
     if(v==null) return '';
-    if(Math.abs(v)<=10) return 'good';
-    if(Math.abs(v)<=20) return 'warn';
+    if(v>=0) return 'good';
+    if(v>=-10) return 'warn';
     return 'bad';
+  }
+
+  function targetOutcomeText(r) {
+    const target=state.lastSearch?.target;
+    if(r.avgBill==null || !target) return 'No usable bill';
+    const diff=r.avgBill-target;
+    return diff>=0 ? `${fmtMoney(diff)} above target` : `${fmtMoney(Math.abs(diff))} below target`;
   }
 
   function evidenceTag(r) {
@@ -489,13 +518,12 @@
     const insurer=state.lastSearch?.insurer||'';
     const tpa=state.lastSearch?.tpa||'';
     $('recommendations').innerHTML=shown.map((r,i)=>{
-      const v=r.variance==null?'—':`${r.variance>=0?'+':''}${r.variance.toFixed(1)}%`;
       const distance=r.dist==null?'Distance —':`${r.dist.toFixed(1)} km`;
       const riskClass=r.risk.key==='severe'?'high':r.risk.key;
       const insurerShort=insurer.replace(/(General|Health) Insurance.*/i,'').trim() || insurer;
       const tpaShort=/in[- ]?house|self/i.test(tpa)?'In-House / Self':tpa.replace(/Insurance TPA.*/i,'').trim() || tpa;
       const latestExactRow=r.ev.exact.slice().sort((a,b)=>(b.dod?.getTime()||0)-(a.dod?.getTime()||0))[0] || null;
-      return `<article class="rec-card ${i===0?'selected':''} ${r.gapPct!=null&&r.gapPct>=CFG.DEDUCTION_HIGH_PCT?'deduction-alert':''}" data-index="${i}">
+      return `<article class="rec-card ${i===0?'selected':''} ${r.avgGapPct!=null&&r.avgGapPct>=CFG.DEDUCTION_HIGH_PCT?'deduction-alert':''}" data-index="${i}">
         <div class="rank ${i===0?'top':''}">${i+1}</div>
         <div class="rec-hospital">
           <div class="hospital-name">${esc(r.h.hospitalName)}</div>
@@ -504,9 +532,9 @@
           <div class="chip-row"><span class="chip ok">${esc(r.h.status)}</span>${evidenceTag(r)}${r.restriction.severity!=='none'&&r.restriction.severity!=='info'?`<span class="chip ${r.restriction.severity==='hard'?'bad':'warn'}">Restriction review</span>`:''}</div>
           <div class="subline" title="${esc(insurer)} / ${esc(tpa)}">${esc(insurerShort)} · ${esc(tpaShort)}</div>
         </div>
-        <div class="metric"><span>${r.ev.rank===3?'Exact-combo ':r.ev.rank===2?'Insurer-match ':'Procedure-history '}${r.useBase?'base bill':'median bill'}</span><strong>${fmtMoney(r.medBill)}</strong><div class="subline ${resultVarianceClass(r.variance)}">${r.variance==null?'No usable bill':v+' vs target'}</div></div>
-        <div class="metric"><span>${r.ev.rank===3?'Exact-combo ':r.ev.rank===2?'Insurer-match ':'Procedure-history '}approval</span><strong>${fmtMoney(r.medApproval)}</strong><div class="subline">${r.approvalPct==null?'—':r.approvalPct.toFixed(0)+'% realization'}</div></div>
-        <div class="metric"><span>Deduction</span><strong class="risk-${riskClass}">${r.gapPct==null?'—':r.gapPct.toFixed(1)+'%'}</strong><div class="subline">${fmtMoney(r.medGap)}</div></div>
+        <div class="metric"><span>${r.ev.rank===3?'Exact-combo ':r.ev.rank===2?'Insurer-match ':'Procedure-history '}${r.useBase?'avg base ATS':'avg bill / ATS'}</span><strong>${fmtMoney(r.avgBill)}</strong><div class="subline ${resultVarianceClass(r.avgBill!=null&&state.lastSearch?.target?(r.avgBill-state.lastSearch.target)/state.lastSearch.target*100:null)}">${targetOutcomeText(r)}</div></div>
+        <div class="metric"><span>${r.ev.rank===3?'Exact-combo ':r.ev.rank===2?'Insurer-match ':'Procedure-history '}avg approval</span><strong>${fmtMoney(r.avgApproval)}</strong><div class="subline">${r.avgApprovalPct==null?'—':r.avgApprovalPct.toFixed(0)+'% avg realization'}</div></div>
+        <div class="metric"><span>Avg deduction</span><strong class="risk-${riskClass}">${r.avgGapPct==null?'—':r.avgGapPct.toFixed(1)+'%'}</strong><div class="subline">${fmtMoney(r.avgGap)}</div></div>
         <div class="history-lines"><strong>Exact combo: ${r.ev.exact.length}${latestExactRow?.ipd?` · IPD ${esc(latestExactRow.ipd)}`:''}</strong><small>Last exact: ${fmtDate(r.lastExact)} · Confidence ${esc(r.conf)}</small><small>Planning basis: ${esc(r.ev.level)} · n=${r.rows.length}</small></div>
       </article>`;
     }).join('');
@@ -564,9 +592,9 @@
 
     $('hospital-detail').innerHTML=`
       <div class="detail-section">
-        <div class="detail-kpi"><span>${r.useBase?'Median Estimated Base Bill':'Median Bill'}</span><strong>${fmtMoney(r.medBill)}</strong>${r.medTotalBill!=null&&r.useBase?`<small>Total bill median ${fmtMoney(r.medTotalBill)}</small>`:''}</div>
-        <div class="detail-kpi"><span>Median Approval</span><strong>${fmtMoney(r.medApproval)}</strong><small>${r.approvalPct==null?'Approval % unavailable':r.approvalPct.toFixed(1)+'% median realization'}</small></div>
-        <div class="detail-kpi ${r.gapPct!=null&&r.gapPct>=20?'danger-kpi':''}"><span>Median Deduction</span><strong>${fmtMoney(r.medGap)}</strong><small>${r.gapPct==null?'—':r.gapPct.toFixed(1)+'% of bill · '+r.risk.label}</small></div>
+        <div class="detail-kpi"><span>${r.useBase?'Average Estimated Base ATS':'Average Bill / ATS'}</span><strong>${fmtMoney(r.avgBill)}</strong><small>Median ${fmtMoney(r.medBill)}${r.medTotalBill!=null&&r.useBase?` · total-bill median ${fmtMoney(r.medTotalBill)}`:''}</small></div>
+        <div class="detail-kpi"><span>Average Approval</span><strong>${fmtMoney(r.avgApproval)}</strong><small>${r.avgApprovalPct==null?'Approval % unavailable':r.avgApprovalPct.toFixed(1)+'% average realization'} · median ${fmtMoney(r.medApproval)}</small></div>
+        <div class="detail-kpi ${r.avgGapPct!=null&&r.avgGapPct>=20?'danger-kpi':''}"><span>Average Deduction</span><strong>${fmtMoney(r.avgGap)}</strong><small>${r.avgGapPct==null?'—':r.avgGapPct.toFixed(1)+'% of bill · '+riskFromPct(r.avgGapPct).label}</small></div>
         <div class="detail-kpi"><span>Last Exact Match</span><strong>${fmtDate(r.lastExact)}</strong><small>${r.lastExact?daysAgo(r.lastExact)+' days ago':'No exact insurer + TPA case'}</small></div>
         <div class="detail-kpi"><span>Last Procedure Case</span><strong>${fmtDate(r.lastProc)}</strong><small>${r.lastProc?daysAgo(r.lastProc)+' days ago':'No procedure history'}</small></div>
       </div>
@@ -634,11 +662,11 @@
   }
 
   function renderDeductionWatch(results) {
-    const rows=results.filter(r=>r.gapPct!=null).sort((a,b)=>b.gapPct-a.gapPct).slice(0,8);
+    const rows=results.filter(r=>r.avgGapPct!=null).sort((a,b)=>b.avgGapPct-a.avgGapPct).slice(0,8);
     if(!rows.length){$('deduction-table').innerHTML='<div class="detail-empty compact">No usable bill/approval pairs for this search.</div>';return;}
     $('deduction-table').innerHTML=`<div class="risk-list">${rows.map(r=>{
       const riskClass=r.risk.key==='severe'?'high':r.risk.key;
-      return `<div class="risk-row ${r.gapPct>=20?'risk-row-alert':''}"><strong>${esc(r.h.hospitalName)}</strong><span>${fmtMoney(r.medTotalBill??r.medBill)}</span><span>${fmtMoney(r.medApproval)}</span><span><b>${fmtMoney(r.medGap)}</b><em class="risk-badge ${riskClass}">${r.gapPct.toFixed(0)}%</em></span></div>`;
+      return `<div class="risk-row ${r.avgGapPct>=20?'risk-row-alert':''}"><strong>${esc(r.h.hospitalName)}</strong><span>${fmtMoney(r.avgTotalBill??r.avgBill)}</span><span>${fmtMoney(r.avgApproval)}</span><span><b>${fmtMoney(r.avgGap)}</b><em class="risk-badge ${riskClass}">${r.avgGapPct.toFixed(0)}%</em></span></div>`;
     }).join('')}</div>`;
   }
 
@@ -697,10 +725,10 @@
   function exportOptions() {
     if(!state.currentResults.length || !state.lastSearch) return;
     const s=state.lastSearch;
-    const rows=[['Rank','Hospital','City','Pincode','Approx Distance km','Evidence','Comparable Cases','Last Exact Match','Last Procedure Case','Median Bill/Base Bill','Median Approval','Approval %','Median Deduction','Deduction %','Target','Target Variance %','Confidence','Current Restriction']];
+    const rows=[['Rank','Hospital','City','Pincode','Approx Distance km','Evidence','Comparable Cases','Last Exact Match','Last Procedure Case','Average Bill / ATS','Average Approval','Average Approval %','Average Deduction','Average Deduction %','Target','Target Variance %','Confidence','Current Restriction']];
     state.currentResults.slice(0,5).forEach((r,i)=>rows.push([
       i+1,r.h.hospitalName,cityLabelFromKey(r.h.cityKey),r.h.pinCode,r.dist==null?'':r.dist.toFixed(1),r.ev.level,r.rows.length,fmtDate(r.lastExact),fmtDate(r.lastProc),
-      r.medBill==null?'':Math.round(r.medBill),r.medApproval==null?'':Math.round(r.medApproval),r.approvalPct==null?'':r.approvalPct.toFixed(1),r.medGap==null?'':Math.round(r.medGap),r.gapPct==null?'':r.gapPct.toFixed(1),s.target,r.variance==null?'':r.variance.toFixed(1),r.conf,r.restriction.label
+      r.avgBill==null?'':Math.round(r.avgBill),r.avgApproval==null?'':Math.round(r.avgApproval),r.avgApprovalPct==null?'':r.avgApprovalPct.toFixed(1),r.avgGap==null?'':Math.round(r.avgGap),r.avgGapPct==null?'':r.avgGapPct.toFixed(1),s.target,r.avgVariance==null?'':r.avgVariance.toFixed(1),r.conf,r.restriction.label
     ]));
     const csv=rows.map(row=>row.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
     const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}); const url=URL.createObjectURL(blob);

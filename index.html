@@ -73,7 +73,7 @@
           <p id="result-subtitle">Select case details to rank 4–5 suitable hospitals.</p>
         </div>
         <div class="results-actions">
-          <select id="sort-by"><option value="best">Best match</option><option value="distance">Nearest</option><option value="deduction">Lowest deduction</option><option value="recent">Most recent evidence</option><option value="approval">Highest approval %</option></select>
+          <select id="sort-by"><option value="best">Best Business Outcome</option><option value="ats">Highest ATS</option><option value="approval-amount">Highest Approval Amount</option><option value="deduction">Lowest Deduction</option><option value="approval">Highest Approval %</option><option value="recent">Most Recent Evidence</option><option value="distance">Nearest</option></select>
           <button id="export-btn" class="btn secondary" disabled>Export</button>
         </div>
       </div>
@@ -105,9 +105,9 @@
       <summary>How Ranking Works</summary>
       <div class="method-grid">
         <div><b>1. Empanelment first</b><span>Sheet 1 must show the hospital as a partner and the selected insurer + TPA as eligible.</span></div>
-        <div><b>2. Target fit</b><span>Historical bill is compared with the target for that procedure.</span></div>
-        <div><b>3. Approval & deductions</b><span>Approval realization and Bill − Approval gap are displayed together.</span></div>
-        <div><b>4. Evidence strength</b><span>Comparable case count and exact insurer/TPA history influence confidence.</span></div>
+        <div><b>2. Target is a benchmark</b><span>Below-target ATS is penalised. Hospitals are not penalised for billing above target; stronger ATS is rewarded with an outlier cap.</span></div>
+        <div><b>3. Business outcome</b><span>Average Bill / ATS and average approval amount drive ranking, while deduction % controls for poor insurer realization.</span></div>
+        <div><b>4. Same-procedure evidence</b><span>Ordinary procedures are matched from the Procedure field, then filtered to the exact insurer + TPA. Free-text remarks do not create a false procedure match.</span></div>
         <div><b>5. Recency</b><span>Last exact match and last procedure date prevent stale history from looking current.</span></div>
         <div><b>6. Operational comments</b><span>Hold / low package / do-not-give instructions are surfaced before the option is shared.</span></div>
       </div>

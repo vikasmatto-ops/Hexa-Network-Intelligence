@@ -1,22 +1,9 @@
-# Hexa Hospital Planner — V5 Classic Intelligence
+# Hexa Hospital Planner V10
 
-Purpose: a focused decision-support tool for the KYP team to choose 4–5 currently eligible partner hospitals after KYP is completed in CRM.
+V10 fixes Best Business Outcome ranking.
 
-## Core principles
-- Sheet 1 / Hospital Network is the partner-hospital source of truth.
-- A recommendation is eligible only when the hospital is a Sheet-1 partner, active (by default), insurer panel = Yes, and TPA panel = Yes (or In-House/Self as applicable).
-- Empanelment is displayed explicitly in every recommendation row.
-- ASP history ranks eligible hospitals; it never overrides empanelment.
-- Bill vs approval deductions are visible inline and high-gap options are highlighted.
-- Last exact insurer+TPA case and last procedure case are shown.
-- Pincode is optional and enables approximate distance/map context.
-
-## Data
-Live published Google Sheet CSV URLs are configured in `config.js`.
-Procedure business targets and separate-component rules are in `targets.js`.
-
-## Deployment
-Upload all files to the GitHub Pages repository root and deploy from `main / root`.
-
-## V7 exact-combination evidence
-Hospital detail now shows IPD number, date, bill, approval and gap for the exact same procedure + hospital + insurer + TPA combination. If the ASP source literally contains `##########` in Bill Amount, the UI says so and separates exact-combo evidence from fallback planning benchmarks.
+- Target is a benchmark/floor, not a bullseye.
+- ATS and absolute approval amount are the primary ranking signals.
+- Strong hospitals are no longer capped into the same 100/100 score.
+- Dominance sanity gate: with equal-or-better evidence, a hospital with higher ATS, higher approval and lower/equal deduction cannot rank below the weaker hospital.
+- Sample size, deductions, recency and distance remain supporting signals.

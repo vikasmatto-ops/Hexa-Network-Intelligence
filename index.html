@@ -48,6 +48,7 @@
 
       <div class="filters-grid">
         <label><span>City *</span><select id="city"></select></label>
+        <label class="hospital-filter"><span>Hospital Name</span><input id="planner-hospital" list="planner-hospital-list" placeholder="All partner hospitals · type to search"><datalist id="planner-hospital-list"></datalist><small>Optional · search or force-check one hospital</small></label>
         <label><span>Pincode</span><input id="pincode" maxlength="6" inputmode="numeric" placeholder="e.g. 122002"><small id="pin-hint">Optional · enables distance</small></label>
         <label><span>Procedure *</span><select id="procedure"></select></label>
         <label><span>Target Bill</span><input id="target" inputmode="numeric"><small id="target-note"></small></label>
@@ -79,6 +80,7 @@
       </div>
 
       <div class="recommendations" id="recommendations"><div class="empty-state">Choose filters and click <b>Find Hospitals</b>.</div></div>
+      <div id="panel-conflicts" class="panel-conflicts" hidden></div>
 
       <div class="result-tools-row">
         <details class="compact-details" id="deduction-section">
@@ -104,7 +106,7 @@
     <details class="master-details" id="methodology">
       <summary>How Ranking Works</summary>
       <div class="method-grid">
-        <div><b>1. Empanelment first</b><span>Sheet 1 must show the hospital as a partner and the selected insurer + TPA as eligible.</span></div>
+        <div><b>1. Empanelment first</b><span>Sheet 1 is the current authority. Historical cases cannot silently override a current No; any conflict is shown separately for verification.</span></div>
         <div><b>2. Target is a benchmark</b><span>Below-target ATS is penalised. Hospitals are not penalised for billing above target; stronger ATS is rewarded with an outlier cap.</span></div>
         <div><b>3. Business outcome</b><span>Average Bill / ATS and average approval amount drive ranking, while deduction % controls for poor insurer realization.</span></div>
         <div><b>4. Same-procedure evidence</b><span>Ordinary procedures are matched from the Procedure field, then filtered to the exact insurer + TPA. Free-text remarks do not create a false procedure match.</span></div>

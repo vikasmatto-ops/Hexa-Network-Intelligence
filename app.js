@@ -79,10 +79,16 @@
   }
 
   function hospitalKey(s) {
-    return canonText(s)
+    let key = canonText(s)
       .replace(/\bformerly\b.*$/,'')
       .replace(/\bunit of\b.*$/,'')
       .trim();
+
+    // Known source-name aliases: Hospital Network and ASP Data sometimes use
+    // different names for the same physical partner hospital. Keep these
+    // mappings narrow and locality-specific so history is not merged blindly.
+    if (key.includes('oscar') && key.includes('kasarvadavali')) return 'oscar kasarvadavali thane';
+    return key;
   }
 
   const GENERIC_HOSPITAL_WORDS = new Set(['hospital','hospitals','multispeciality','multi','speciality','specialty','superspeciality','super','research','centre','center','clinic','medical','healthcare','health','and','the','pvt','private','limited','ltd']);
@@ -332,6 +338,31 @@
     if(usableCount(insurerOnly)>=4) return {rows:insurerOnly,level:'Insurer match; TPA fallback',rank:2,exact,insurerOnly};
     if(procCases.length) return {rows:procCases,level:'Procedure-only history',rank:1,exact,insurerOnly};
     return {rows:[],level:'No procedure history',rank:0,exact,insurerOnly};
+  }
+
+  function exactComboCases(h, proc, insurer, tpa) {
+    return h.cases.filter(c =>
+      proc.match(c.procedure, c.remarks) &&
+      insurerCanon(c.insurer) === insurerCanon(insurer) &&
+      (/in[- ]?house|self/i.test(tpa)
+        ? /in[- ]?house|self/i.test(c.tpa)
+        : tpaCanon(c.tpa) === tpaCanon(tpa))
+    );
+  }
+
+  function panelConflictFor(h, proc, insurer, tpa) {
+    const exact = exactComboCases(h, proc, insurer, tpa);
+    if (!exact.length) return null;
+    const usable = exact.filter(c => c.bill != null && c.approval != null && c.bill > 0);
+    const latest = exact.slice().sort((a,b)=>(b.dod?.getTime()||0)-(a.dod?.getTime()||0))[0] || null;
+    const insurerRaw = payerRawValue(h.insurerRaw, insurer, insurerCanon) || 'Blank';
+    const tpaRaw = /in[- ]?house|self/i.test(tpa) ? 'Self / In-House' : (payerRawValue(h.tpaRaw, tpa, tpaCanon) || 'Blank');
+    return {
+      h, exact, latest, insurerRaw, tpaRaw,
+      avgBill: mean(usable.map(c=>c.bill)),
+      avgApproval: mean(usable.map(c=>c.approval)),
+      status: h.status
+    };
   }
 
   function latestDate(rows) {
@@ -681,6 +712,32 @@
       </div>`:''}`;
   }
 
+  function renderPanelConflicts(conflicts, insurer, tpa) {
+    const box = $('panel-conflicts');
+    if (!box) return;
+    if (!conflicts.length) { box.hidden = true; box.innerHTML = ''; return; }
+    const insurerShort = insurer.replace(/(General|Health) Insurance.*/i,'').trim() || insurer;
+    box.hidden = false;
+    box.innerHTML = `
+      <div class="panel-conflict-head">
+        <strong>⚠ Historical cases found, but current Sheet-1 empanelment blocks recommendation</strong>
+        <span>${conflicts.length} hospital${conflicts.length===1?'':'s'} · verify panel before sharing with patient</span>
+      </div>
+      <div class="panel-conflict-list">${conflicts.map(x=>{
+        const latestIpd=x.latest?.ipd?` · IPD ${esc(x.latest.ipd)}`:'';
+        const reasons=[];
+        if(x.status!=='Active') reasons.push(`Status ${esc(x.status)}`);
+        if(String(x.insurerRaw).toLowerCase()!=='yes') reasons.push(`${esc(insurerShort)} = ${esc(x.insurerRaw)}`);
+        if(!/in[- ]?house|self/i.test(tpa) && String(x.tpaRaw).toLowerCase()!=='yes') reasons.push(`TPA = ${esc(x.tpaRaw)}`);
+        return `<div class="panel-conflict-row">
+          <div><strong>${esc(x.h.hospitalName)}</strong><small>${esc(cityLabelFromKey(x.h.cityKey))} · PIN ${esc(x.h.pinCode||'—')}</small></div>
+          <div class="panel-no">✕ CURRENT PANEL BLOCK<br>${reasons.join(' · ')}</div>
+          <div class="history-proof"><b>${x.exact.length} exact historical case${x.exact.length===1?'':'s'}${latestIpd}</b><span>Last: ${fmtDate(x.latest?.dod)} · Avg ATS ${fmtMoney(x.avgBill)}</span></div>
+          <div class="verify-note">Historical evidence is visible, but Sheet 1 remains the current authority. Correct Sheet 1 to YES if empanelment is active.</div>
+        </div>`;
+      }).join('')}</div>`;
+  }
+
   function renderDeductionWatch(results) {
     const rows=results.filter(r=>r.avgGapPct!=null).sort((a,b)=>b.avgGapPct-a.avgGapPct).slice(0,8);
     if(!rows.length){$('deduction-table').innerHTML='<div class="detail-empty compact">No usable bill/approval pairs for this search.</div>';return;}
@@ -716,30 +773,45 @@
   function performSearch() {
     const city=$('city').value, insurer=$('insurer').value, tpa=$('tpa').value;
     if(!city||!insurer||!tpa){
-      $('recommendations').innerHTML='<div class="empty-state">City, insurer and TPA are required.</div>'; return;
+      $('recommendations').innerHTML='<div class="empty-state">City, insurer and TPA are required.</div>';
+      renderPanelConflicts([],insurer,tpa);
+      return;
     }
     const proc=selectedProcedure(), target=targetValue();
     const pin=$('pincode').value.trim(); const uc=pinCoord(pin);
     const radius=$('radius').value?Number($('radius').value):null;
     const includeRestricted=$('include-restricted').checked;
+    const hospitalQuery=canonText($('planner-hospital')?.value || '');
     let hardExcluded=0;
 
     const candidates=[];
+    const conflicts=[];
     for(const h of state.hospitals){
-      if($('active-only').checked && h.status!=='Active') continue;
       if(h.cityKey!==city) continue;
-      if(!panelYes(h,'insurer',insurer)) continue;
-      if(!panelYes(h,'tpa',tpa)) continue;
+      if(hospitalQuery && !canonText([h.hospitalName,h.area,h.pinCode].join(' ')).includes(hospitalQuery)) continue;
+
+      const activeOk=!$('active-only').checked || h.status==='Active';
+      const insurerOk=panelYes(h,'insurer',insurer);
+      const tpaOk=panelYes(h,'tpa',tpa);
+
+      if(!activeOk || !insurerOk || !tpaOk){
+        const conflict=panelConflictFor(h,proc,insurer,tpa);
+        if(conflict) conflicts.push(conflict);
+        continue;
+      }
+
       const r=buildRecommendation(h,proc,insurer,tpa,target,uc);
       if(uc && radius!=null && r.dist!=null && r.dist>radius) continue;
       if(r.restriction.severity==='hard' && !includeRestricted){ hardExcluded++; continue; }
       candidates.push(r);
     }
 
-    state.lastSearch={city,insurer,tpa,proc,target,pin,radius,hardExcluded};
-    $('eligibility-foot').textContent=`Eligibility: Sheet 1 partner + ${$('active-only').checked?'active + ':''}insurer panel + TPA panel${uc&&radius?` + within ${radius} km when coordinates are available`:''}.`;
+    conflicts.sort((a,b)=>b.exact.length-a.exact.length || (b.avgBill??0)-(a.avgBill??0));
+    state.lastSearch={city,insurer,tpa,proc,target,pin,radius,hospitalQuery,hardExcluded};
+    $('eligibility-foot').textContent=`Eligibility: Sheet 1 partner + ${$('active-only').checked?'active + ':''}insurer panel + TPA panel${uc&&radius?` + within ${radius} km when coordinates are available`:''}.${conflicts.length?` ${conflicts.length} historical panel conflict${conflicts.length===1?'':'s'} shown below.`:''}`;
     $('map-caption').textContent=uc?`Approx distance from ${pin}`:'Add pincode for distance ranking';
     renderResults(candidates);
+    renderPanelConflicts(conflicts,insurer,tpa);
   }
 
   function exportOptions() {
@@ -757,18 +829,30 @@
   }
 
   function resetPlanner() {
-    $('city').selectedIndex=0; $('pincode').value=''; $('radius').value='25'; $('procedure').selectedIndex=0; setTarget(); $('insurer').selectedIndex=0; $('tpa').selectedIndex=0;
+    $('city').selectedIndex=0; if($('planner-hospital')) $('planner-hospital').value=''; $('pincode').value=''; $('radius').value='25'; $('procedure').selectedIndex=0; setTarget(); $('insurer').selectedIndex=0; $('tpa').selectedIndex=0;
     $('active-only').checked=true; $('include-restricted').checked=false; $('sort-by').value='best';
     state.currentResults=[]; state.lastSearch=null; $('export-btn').disabled=true;
     $('recommendations').innerHTML='<div class="empty-state">Choose filters and click <strong>Find Hospitals</strong>.</div>';
     $('deduction-table').innerHTML='<div class="detail-empty">Run a search to identify deduction-heavy hospitals.</div>';
     $('hospital-detail').innerHTML='<div class="detail-empty">Historical economics, exact-match recency, device information and current comments will appear here.</div>';
-    $('result-subtitle').textContent='Select case details to rank 4–5 suitable hospitals.'; $('pin-hint').textContent='Adds approximate distance from patient pincode.'; clearMap();
+    $('result-subtitle').textContent='Select case details to rank 4–5 suitable hospitals.'; $('pin-hint').textContent='Adds approximate distance from patient pincode.'; renderPanelConflicts([],'',''); updatePlannerHospitalList(); clearMap();
+  }
+
+  function updatePlannerHospitalList() {
+    const list=$('planner-hospital-list');
+    if(!list) return;
+    const city=$('city')?.value || '';
+    const hospitals=state.hospitals
+      .filter(h=>!city || h.cityKey===city)
+      .slice()
+      .sort((a,b)=>a.hospitalName.localeCompare(b.hospitalName));
+    list.innerHTML=hospitals.map(h=>`<option value="${esc(h.hospitalName)}">${esc(h.area||cityLabelFromKey(h.cityKey))}</option>`).join('');
   }
 
   function populateControls() {
     const cities=[...new Set(state.hospitals.map(h=>h.cityKey).filter(Boolean))].sort((a,b)=>cityLabelFromKey(a).localeCompare(cityLabelFromKey(b)));
     setSelect($('city'),cities,'Select city',x=>x,x=>cityLabelFromKey(x));
+    updatePlannerHospitalList();
     $('procedure').innerHTML=TARGET_PROCEDURES.map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
     setTarget();
     setSelect($('insurer'),state.insurers.slice().sort((a,b)=>a.localeCompare(b)),'Select insurer');
@@ -780,6 +864,7 @@
     $('find-btn').addEventListener('click',performSearch);
     $('reset-btn').addEventListener('click',resetPlanner);
     $('procedure').addEventListener('change',setTarget);
+    $('city').addEventListener('change',()=>{ if($('planner-hospital')) $('planner-hospital').value=''; updatePlannerHospitalList(); });
     $('hospital-search').addEventListener('input',e=>renderHospitalTable(e.target.value));
     $('sort-by').addEventListener('change',()=>state.currentResults.length&&renderResults(state.currentResults));
     $('export-btn').addEventListener('click',exportOptions);
@@ -801,7 +886,7 @@
     const sync=$('sync-pill'); const refresh=$('refresh-btn');
     const hadData=!!state.loadedAt;
     const previous={
-      city:$('city').value,procedure:$('procedure').value,insurer:$('insurer').value,tpa:$('tpa').value,
+      city:$('city').value,hospital:$('planner-hospital')?.value||'',procedure:$('procedure').value,insurer:$('insurer').value,tpa:$('tpa').value,
       pincode:$('pincode').value,radius:$('radius').value,target:$('target').value,active:$('active-only').checked,restricted:$('include-restricted').checked,sort:$('sort-by').value
     };
     sync.textContent=manual?'Refreshing…':hadData?'Auto-refreshing…':'Loading live data…'; refresh.disabled=true;
@@ -814,6 +899,8 @@
       renderKpis(); populateControls(); renderHospitalTable($('hospital-search').value);
       if(hadData){
         if([...$('city').options].some(o=>o.value===previous.city)) $('city').value=previous.city;
+        updatePlannerHospitalList();
+        if($('planner-hospital')) $('planner-hospital').value=previous.hospital||'';
         if([...$('procedure').options].some(o=>o.value===previous.procedure)) $('procedure').value=previous.procedure;
         if([...$('insurer').options].some(o=>o.value===previous.insurer)) $('insurer').value=previous.insurer;
         if([...$('tpa').options].some(o=>o.value===previous.tpa)) $('tpa').value=previous.tpa;

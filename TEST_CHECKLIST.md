@@ -1,18 +1,6 @@
-# V5 Test Checklist
+# V10 checks
 
-- [ ] Dashboard loads live Hospital Network + ASP Data.
-- [ ] City, Procedure, Insurer and TPA filters populate.
-- [ ] Search never recommends an ASP-only hospital absent from Sheet 1.
-- [ ] Active-only search excludes inactive/on-hold hospitals.
-- [ ] Every recommended row visibly shows `EMPANELLED`, `Insurer YES`, `TPA YES`.
-- [ ] A hospital with insurer = No in Sheet 1 never qualifies for that insurer.
-- [ ] A hospital with TPA = No in Sheet 1 never qualifies for that TPA.
-- [ ] Matching hard operational restriction is excluded unless Include restricted/hold is checked.
-- [ ] Median bill, target variance, median approval, approval realization, deduction amount/% are shown.
-- [ ] Major deduction rows are highlighted.
-- [ ] Comparable case count, last exact case, last procedure case and confidence are shown.
-- [ ] Pincode enables approximate distance where coordinates exist.
-- [ ] Map expands only when requested.
-- [ ] Clicking a result opens detailed evidence; detail is hidden by default.
-- [ ] Partner Hospital List retains old-style table/coverage/comments.
-- [ ] Export outputs top 5 options.
+- Gurgaon / Care / In-House / Circumcision: Cloudnine must outrank Narayana when Cloudnine has higher ATS, higher absolute approval and lower deduction on comparable exact evidence.
+- Delhi / ICICI / In-House / Piles: Dharamshila should remain above lower-ATS/lower-approval alternatives when empanelment is valid.
+- Sorting options Highest ATS / Highest Approval / Lowest Deduction / Most Recent / Nearest still work.
+- Hard empanelment and restriction gates remain unchanged.

@@ -88,6 +88,10 @@
     // different names for the same physical partner hospital. Keep these
     // mappings narrow and locality-specific so history is not merged blindly.
     if (key.includes('oscar') && key.includes('kasarvadavali')) return 'oscar kasarvadavali thane';
+    // ASP uses "Surya Hospital, Wakad, Pune" while Sheet 1 uses
+    // "Surya mother & child" for the Wakad partner row (PIN 411057).
+    // Keep this alias narrow so other Surya branches remain separate.
+    if (key === 'surya mother and child' || (key.includes('surya') && key.includes('wakad'))) return 'surya wakad pune';
     return key;
   }
 
@@ -289,43 +293,73 @@
     const text=[h.insComments,h.cityComments,h.doctorComments].filter(Boolean).join(' | ');
     if(!text) return {severity:'none',label:'None relevant',text:''};
 
-    // IMPORTANT: scope restrictions to the clause they appear in.
-    // A hospital comment can mention multiple payers, e.g.
-    // "DO NOT give in GIPSA ... ICICI CC only 13k ...".
-    // The old parser treated any negative phrase anywhere + "ICICI" anywhere
-    // as a hard ICICI restriction and wrongly excluded the hospital.
+    // Free-text comments often contain several independent instructions in one cell.
+    // Evaluate clause-by-clause and do not let a restriction for Zip injury / vascular /
+    // another insurer contaminate the selected procedure. Also allow an explicit later
+    // exception (e.g. \"not hold for obesity; discuss with Sushant then proceed\") to
+    // downgrade a hard hold to REVIEW instead of silently excluding the hospital.
     const clauses=text
       .split(/\n+|\|+|;|\.{2,}/)
       .map(x=>x.trim())
       .filter(Boolean);
     const ik=insurerKeyword(insurer);
-    const escRe=v=>String(v||'').replace(/[-/\^$*+?.()|[\]{}]/g,'\$&');
-    const negRe=/\bhold\b|do not give|don't give|dont give|not active|stop cashless|low pkg|low package|restricted|not proceed|total hold|inactive/;
-    const globalRe=/hold all|all ins(?:urance)?|total hold|stop cashless/;
+    const escRe=v=>String(v||'').replace(/[-/\\^$*+?.()|[\]{}]/g,'\\$&');
+    const negRe=/\bhold\b|do not give|don't give|dont give|not active|stop cashless|low pkg|low package|restricted|not proceed|total hold|inactive|will not do|can't do|cannot do/;
+    const trueGlobalRe=/hold all ins(?:urance)?|all ins(?:urance)?(?:\s+cases?)?|stop cashless(?:\s+all)?|hospital\s+total\s+hold|all cases?\s+hold/;
+    const positiveRe=/not (?:on )?hold|not hold|can proceed|may proceed|can do|allowed|open for|provide (?:the )?option|give (?:the )?option|discuss(?:ed)? and approv|approved by|after approval|case has to be discussed|case needs? approval/;
 
+    // Known procedure-scope words used in operational comments, including procedures
+    // outside this planner. They prevent phrases such as \"Zip injury ... Total hold\"
+    // from being interpreted as a hospital-wide hold for Sleeve Bariatric.
+    const scopeGroups=[
+      ['zip injury',/zip injury/],
+      ['circumcision',/circumcision|balanoposthitis/],
+      ['vascular',/vascular|varicose|venaseal|sclerotherapy|evlt|evla|thrombectomy/],
+      ['bariatric',/bariatric|obesity|sleeve|gastric bypass|balloon|allurion/],
+      ['proctology',/procto|piles|fistula|fissure|haemorrhoid|hemorrhoid/],
+      ['urology',/uro|rirs|pcnl|ursl|dj stent|turp|kidney stone/],
+      ['aesthetic',/gynaecomastia|gynecomastia|liposuction|tummy tuck|abdominoplasty|rhinoplasty|lipoma/],
+      ['hernia',/hernia|scola/],
+      ['gallbladder',/lap chole|cholecystectomy/],
+      ['usg',/usg dependant|usg dependent/]
+    ];
+    const selectedScope=scopeGroups.filter(([,re])=>re.test((proc.keywords||[]).join(' ')+' '+String(proc.label||'')+' '+String(proc.id||''))).map(([name])=>name);
+    const hardHits=[];
     let reviewHit=false;
     let relevantNote=false;
 
     for(const rawClause of clauses){
       const low=rawClause.toLowerCase();
-      const hasNeg=negRe.test(low);
-      const global=globalRe.test(low);
-      const procHit=proc.keywords.some(k=>low.includes(k));
+      const selectedProcHit=(proc.keywords||[]).some(k=>low.includes(String(k).toLowerCase()));
       const insurerHit=!!(ik && low.includes(ik));
-      if(procHit || insurerHit) relevantNote=true;
+      const clauseScopes=scopeGroups.filter(([,re])=>re.test(low)).map(([name])=>name);
+      const hasOtherSpecificScope=clauseScopes.length>0 && !clauseScopes.some(x=>selectedScope.includes(x)) && !selectedProcHit;
+      const hasNeg=negRe.test(low);
+      const explicitPositive=positiveRe.test(low) && (selectedProcHit || clauseScopes.some(x=>selectedScope.includes(x)) || insurerHit);
+      const trueGlobal=trueGlobalRe.test(low) && !hasOtherSpecificScope;
 
-      if(!hasNeg && !global) continue;
-      if(!(global || procHit || insurerHit)) continue;
+      if(selectedProcHit || insurerHit || clauseScopes.some(x=>selectedScope.includes(x))) relevantNote=true;
+      if(explicitPositive){ reviewHit=true; continue; }
+      if(!hasNeg && !trueGlobal) continue;
 
-      // If the same clause explicitly creates an exception/preference for the
-      // selected insurer, surface it for review rather than excluding it.
-      const exception=!!(ik && new RegExp(`(?:except|accept|only\s+(?:give|given|for)|prefer|good\s+pkg|good\s+package)[^\n]{0,45}${escRe(ik)}|${escRe(ik)}[^\n]{0,45}(?:except|allowed|active|good\s+pkg|good\s+package)`,'i').test(low));
-      if(exception){ reviewHit=true; continue; }
+      // Procedure-specific negative instruction for another procedure: ignore for this search.
+      if(hasOtherSpecificScope && !insurerHit) continue;
 
-      return {severity:'hard',label:'Matching hold / restriction',text};
+      const procRelevant=selectedProcHit || clauseScopes.some(x=>selectedScope.includes(x));
+      if(!(trueGlobal || procRelevant || insurerHit)) continue;
+
+      // Selected-insurer exception/preference in the same clause = review, not exclusion.
+      const insurerException=!!(ik && new RegExp(`(?:except|accept|only\\s+(?:give|given|for)|prefer|good\\s+pkg|good\\s+package|allowed|active)[^\\n]{0,55}${escRe(ik)}|${escRe(ik)}[^\\n]{0,55}(?:except|allowed|active|good\\s+pkg|good\\s+package)`,'i').test(low));
+      if(insurerException){ reviewHit=true; continue; }
+
+      hardHits.push(rawClause);
     }
 
-    if(reviewHit) return {severity:'review',label:'Restriction has selected-insurer exception — review',text};
+    // Explicit procedure-specific permission/approval instructions override an older or
+    // contradictory hard-hold comment to REVIEW. The team still sees the full comments.
+    if(reviewHit && hardHits.length) return {severity:'review',label:'Conflicting instruction — manual approval required',text};
+    if(hardHits.length) return {severity:'hard',label:'Matching hold / restriction',text};
+    if(reviewHit) return {severity:'review',label:'Proceed only after stated approval / review',text};
     if(relevantNote) return {severity:'info',label:'Selected insurer / procedure note available',text};
     return {severity:'info',label:'Other comments available',text};
   }

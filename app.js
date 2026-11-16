@@ -2,6 +2,7 @@
   'use strict';
 
   const CFG = window.HEXA_CONFIG;
+  const BUILD = 'V13';
   const $ = id => document.getElementById(id);
   const now = () => new Date();
   const fmtMoney = n => n == null || !Number.isFinite(n) ? '—' : '₹' + Math.round(n).toLocaleString('en-IN');
@@ -941,7 +942,7 @@
         $('pincode').value=previous.pincode; $('radius').value=previous.radius; $('target').value=previous.target;
         $('active-only').checked=previous.active; $('include-restricted').checked=previous.restricted; $('sort-by').value=previous.sort;
       }
-      sync.textContent=`✓ Live · ${state.loadedAt.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}`;
+      sync.textContent=`✓ Live · ${state.loadedAt.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})} · ${BUILD}`;
       if(hadData && state.lastSearch) performSearch(); else if(!hadData) resetPlanner();
     }catch(err){
       console.error('[Hexa Network Intelligence] data load failed',err);

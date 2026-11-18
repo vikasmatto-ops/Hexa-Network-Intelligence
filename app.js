@@ -88,6 +88,11 @@
     // Known source-name aliases: Hospital Network and ASP Data sometimes use
     // different names for the same physical partner hospital. Keep these
     // mappings narrow and locality-specific so history is not merged blindly.
+    // Both spellings refer to Cura's Kammanahalli branch (PIN 560043).
+    // Do not merge this with Cura Kanakapura (PIN 560062).
+    if (/\bcura\b/.test(key) && /\b(?:kamanahalli|kammanahalli)\b/.test(key)) {
+      return 'cura kammanahalli bangalore';
+    }
     if (key.includes('oscar') && key.includes('kasarvadavali')) return 'oscar kasarvadavali thane';
     // ASP uses "Surya Hospital, Wakad, Pune" while Sheet 1 uses
     // "Surya mother & child" for the Wakad partner row (PIN 411057).
@@ -659,6 +664,14 @@
     $('detail-title').textContent=`${r.h.hospitalName}`;
     const exactRecent=recentExactRows(r);
     const planningRecent=recentPlanningRows(r);
+    const caseYears = cases => Object.entries(cases.reduce((counts,c)=>{
+      const year=c.dod?.getFullYear();
+      if(year) counts[year]=(counts[year]||0)+1;
+      return counts;
+    }, {})).sort(([a],[b])=>Number(b)-Number(a))
+      .map(([year,count])=>`${year}: ${count}`).join(' · ') || 'None with a valid date';
+    const linkedYearSummary=caseYears(r.h.cases);
+    const exactYearSummary=caseYears(r.ev.exact);
     const comments=[r.h.insComments&&`Insurance: ${r.h.insComments}`,r.h.cityComments&&`City: ${r.h.cityComments}`,r.h.doctorComments&&`Doctors: ${r.h.doctorComments}`].filter(Boolean).join('\n');
     const compQuality=r.proc.separateComponent
       ? (r.useBase?`${r.proc.componentLabel} separation available in enough historical rows; target fit uses estimated base bill.`:`${r.proc.componentLabel} is intended separately, but historical device capture is incomplete; target fit currently uses total bill and is lower-confidence.`)
@@ -689,6 +702,8 @@
         <div class="info-panel">
           <h3>Decision evidence</h3>
           <div class="mini-row"><span>Evidence level</span><strong>${esc(r.ev.level)}</strong></div>
+          <div class="mini-row"><span>All linked cases by year (all procedures/payers)</span><strong>${esc(linkedYearSummary)}</strong></div>
+          <div class="mini-row"><span>Exact selected combo cases by year</span><strong>${esc(exactYearSummary)}</strong></div>
           <div class="mini-row"><span>Exact insurer + TPA cases</span><strong>${r.ev.exact.length}</strong></div>
           <div class="mini-row"><span>Exact cases with usable bill + approval</span><strong>${r.exactUsable.length}</strong></div>
           <div class="mini-row"><span>Planning evidence basis</span><strong>${esc(r.ev.level)}</strong></div>
